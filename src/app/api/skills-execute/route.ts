@@ -1,0 +1,71 @@
+import { NextRequest } from "next/server";
+import { listSkills } from "@/lib/skills-reader";
+import { executeSkillScript, executeShellCommand } from "@/lib/skill-executor";
+import os from "os";
+
+export async function POST(req: NextRequest) {
+  const body = await req.json();
+  const { skillName, scriptPath, command, args = [] } = body as {
+    skillName: string;
+    scriptPath?: string;
+    command?: string;
+    args?: string[];
+  };
+
+  if (!skillName || (!scriptPath && !command)) {
+    return new Response(
+      JSON.stringify({ error: "skillName and (scriptPath or command) are required" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  const skills = await listSkills();
+  const skill = skills.find((s) => s.name === skillName);
+  if (!skill) {
+    return new Response(JSON.stringify({ error: "Skill not found" }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const stream = new ReadableStream({
+    start(controller) {
+      const encoder = new TextEncoder();
+
+      function send(data: string) {
+        controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+      }
+
+      const onEvent = (event: { type: string; line?: { type: string; text: string }; code?: number }) => {
+        try {
+          send(JSON.stringify(event));
+        } catch {
+          // stream may be closed
+        }
+      };
+
+      const onDone = () => {
+        try {
+          send("[DONE]");
+          controller.close();
+        } catch {
+          // ignore
+        }
+      };
+
+      if (command) {
+        executeShellCommand(command, os.homedir(), onEvent, onDone);
+      } else {
+        executeSkillScript(skill.path, scriptPath!, args, onEvent, onDone);
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+}
