@@ -2,7 +2,13 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useApp } from "@/providers/AppProvider";
-import { Paperclip, Mic, Send, Square, Plus, Code2, Monitor, Wrench, ChevronDown, Bot, Check } from "lucide-react";
+import { useSkills } from "@/hooks/useSkills";
+import type { Attachment } from "@/types";
+import {
+  Paperclip, Send, Square, Plus, Code2, Monitor, Wrench,
+  ChevronDown, Bot, Check, X, FileText, Image, Loader2,
+} from "lucide-react";
+import { AddSkillDialog } from "@/components/AddSkillDialog";
 
 const SKILL_CHIP_ICONS: Record<string, React.ReactNode> = {
   "code-generator": <Code2 className="w-3.5 h-3.5" />,
@@ -10,8 +16,10 @@ const SKILL_CHIP_ICONS: Record<string, React.ReactNode> = {
   "deploy-helper": <Wrench className="w-3.5 h-3.5" />,
 };
 
+const FILE_ACCEPT = ".pdf,.docx,.pptx,.xlsx,.txt,.md,.csv,.odt,.odp,.ods,.jpg,.jpeg,.png,.gif,.webp";
+
 interface InputAreaProps {
-  onSend: (content: string) => void;
+  onSend: (content: string, attachments?: Attachment[]) => void;
   isLoading: boolean;
   onStop?: () => void;
   models: string[];
@@ -22,9 +30,14 @@ interface InputAreaProps {
 export function InputArea({ onSend, isLoading, onStop, models, selectedModel, onModelChange }: InputAreaProps) {
   const [text, setText] = useState("");
   const [modelOpen, setModelOpen] = useState(false);
+  const [showAddSkill, setShowAddSkill] = useState(false);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(false);
   const modelRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { skills } = useApp();
+  const { refreshSkills } = useSkills();
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -40,13 +53,14 @@ export function InputArea({ onSend, isLoading, onStop, models, selectedModel, on
 
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
-    if (!trimmed || isLoading) return;
-    onSend(trimmed);
+    if ((!trimmed && attachments.length === 0) || isLoading) return;
+    onSend(trimmed, attachments.length > 0 ? attachments : undefined);
     setText("");
+    setAttachments([]);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [text, isLoading, onSend]);
+  }, [text, attachments, isLoading, onSend]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // Ignore Enter during IME composition (e.g. Chinese/Japanese input)
@@ -70,6 +84,50 @@ export function InputArea({ onSend, isLoading, onStop, models, selectedModel, on
     textareaRef.current?.focus();
   };
 
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setUploading(true);
+    const results: Attachment[] = [];
+
+    for (const file of Array.from(files)) {
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        const res = await fetch("/api/files-parse", { method: "POST", body: formData });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          console.error("File parse error:", err.error || res.statusText);
+          continue;
+        }
+        const data = await res.json();
+        results.push({
+          name: data.name,
+          type: data.type,
+          text: data.text,
+          dataUrl: data.dataUrl,
+        });
+      } catch (err) {
+        console.error("File upload error:", err);
+      }
+    }
+
+    if (results.length > 0) {
+      setAttachments((prev) => [...prev, ...results]);
+    }
+    setUploading(false);
+    // Reset input so same file can be selected again
+    e.target.value = "";
+    textareaRef.current?.focus();
+  }, []);
+
+  const removeAttachment = useCallback((index: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const hasContent = text.trim() || attachments.length > 0;
+
   return (
     <div className="px-6 pt-4 pb-5 border-t border-border-glass bg-bg-secondary shrink-0">
       <div className="max-w-[820px] mx-auto">
@@ -88,11 +146,50 @@ export function InputArea({ onSend, isLoading, onStop, models, selectedModel, on
               {skill.name}
             </button>
           ))}
-          <button className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-dashed border-border-glass text-xs text-text-muted hover:text-text-secondary transition-all cursor-pointer">
+          <button
+            onClick={() => setShowAddSkill(true)}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-dashed border-border-glass text-xs text-text-muted hover:text-text-secondary transition-all cursor-pointer"
+          >
             <Plus className="w-3.5 h-3.5" />
             Add
           </button>
         </div>
+
+        {/* Attachment previews */}
+        {(attachments.length > 0 || uploading) && (
+          <div className="flex flex-wrap items-center gap-1.5 mb-2">
+            {attachments.map((att, i) => (
+              <div
+                key={i}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border-glass bg-bg-card text-xs text-text-secondary"
+              >
+                {att.type === "image" ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={att.dataUrl}
+                    alt={att.name}
+                    className="w-6 h-6 rounded object-cover"
+                  />
+                ) : (
+                  <FileText className="w-3.5 h-3.5 text-accent-blue" />
+                )}
+                <span className="max-w-[120px] truncate">{att.name}</span>
+                <button
+                  onClick={() => removeAttachment(i)}
+                  className="w-4 h-4 rounded-full flex items-center justify-center hover:bg-bg-glass text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+            {uploading && (
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-text-muted">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Parsing...
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Input box */}
         <div className="flex items-end gap-2 px-3.5 py-2.5 rounded-2xl border border-border-glass bg-bg-card glass focus-within:border-accent-green transition-colors">
@@ -107,12 +204,21 @@ export function InputArea({ onSend, isLoading, onStop, models, selectedModel, on
             className="flex-1 bg-transparent border-none outline-none text-text-primary text-sm leading-relaxed resize-none min-h-[22px] max-h-[120px] placeholder:text-text-muted font-sans"
           />
           <div className="flex items-center gap-1 shrink-0">
-            <button className="w-8 h-8 rounded-lg bg-transparent text-text-muted flex items-center justify-center hover:bg-bg-glass hover:text-text-primary transition-all cursor-pointer">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={FILE_ACCEPT}
+              multiple
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="w-8 h-8 rounded-lg bg-transparent text-text-muted flex items-center justify-center hover:bg-bg-glass hover:text-text-primary transition-all cursor-pointer"
+            >
               <Paperclip className="w-[18px] h-[18px]" />
             </button>
-            <button className="w-8 h-8 rounded-lg bg-transparent text-text-muted flex items-center justify-center hover:bg-bg-glass hover:text-text-primary transition-all cursor-pointer">
-              <Mic className="w-[18px] h-[18px]" />
-            </button>
+
             {isLoading ? (
               <button
                 onClick={onStop}
@@ -123,7 +229,7 @@ export function InputArea({ onSend, isLoading, onStop, models, selectedModel, on
             ) : (
               <button
                 onClick={handleSend}
-                disabled={!text.trim()}
+                disabled={!hasContent}
                 className="w-8 h-8 rounded-lg bg-accent-green text-white flex items-center justify-center hover:bg-green-600 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Send className="w-4 h-4" />
@@ -168,6 +274,12 @@ export function InputArea({ onSend, isLoading, onStop, models, selectedModel, on
           <span>Powered by Chat-Skills Engine</span>
         </div>
       </div>
+
+      <AddSkillDialog
+        open={showAddSkill}
+        onClose={() => setShowAddSkill(false)}
+        onInstalled={refreshSkills}
+      />
     </div>
   );
 }

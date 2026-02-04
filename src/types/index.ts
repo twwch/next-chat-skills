@@ -7,6 +7,13 @@ export interface Conversation {
   activities?: ActivityItem[]
 }
 
+export interface Attachment {
+  name: string
+  type: 'document' | 'image'
+  text?: string
+  dataUrl?: string
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant'
@@ -14,6 +21,7 @@ export interface Message {
   timestamp: number
   skillInvocations?: SkillInvocation[]
   isAutomatic?: boolean
+  attachments?: Attachment[]
 }
 
 export interface SkillInvocation {

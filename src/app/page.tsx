@@ -11,7 +11,7 @@ import { ChatArea } from "@/components/chat/ChatArea";
 import { InputArea } from "@/components/chat/InputArea";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { useSkills } from "@/hooks/useSkills";
-import type { Conversation, Message, SkillInvocation, TerminalData, ReferenceData, SubagentData } from "@/types";
+import type { Attachment, Conversation, Message, SkillInvocation, TerminalData, ReferenceData, SubagentData } from "@/types";
 
 interface FileBlock {
   filePath: string;
@@ -354,17 +354,23 @@ export default function Home() {
   settingsRef.current = settings;
   const selectedModelRef = useRef(selectedModel);
   selectedModelRef.current = selectedModel;
+  const pendingImagesRef = useRef<Array<{ name: string; dataUrl: string }>>([]);
 
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
-        body: () => ({
-          settings: {
-            ...settingsRef.current,
-            model: selectedModelRef.current,
-          },
-        }),
+        body: () => {
+          const images = pendingImagesRef.current;
+          pendingImagesRef.current = [];
+          return {
+            settings: {
+              ...settingsRef.current,
+              model: selectedModelRef.current,
+            },
+            ...(images.length > 0 ? { images } : {}),
+          };
+        },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
@@ -876,11 +882,28 @@ export default function Home() {
   );
 
   const handleSend = useCallback(
-    (content: string) => {
+    (content: string, attachments?: Attachment[]) => {
       stoppedRef.current = false;
       setChatError(null);
       let conv = conversationRef.current;
       let convId = currentConversationId;
+
+      // Build full content: prepend document attachments as context
+      let fullContent = content;
+      if (attachments) {
+        const docParts: string[] = [];
+        for (const att of attachments) {
+          if (att.type === "document" && att.text) {
+            docParts.push(`[Attached: ${att.name}]\n\`\`\`\n${att.text}\n\`\`\``);
+          }
+          if (att.type === "image" && att.dataUrl) {
+            pendingImagesRef.current.push({ name: att.name, dataUrl: att.dataUrl });
+          }
+        }
+        if (docParts.length > 0) {
+          fullContent = docParts.join("\n\n") + "\n\n" + content;
+        }
+      }
 
       if (!conv) {
         const firstWords = content.split(" ").slice(0, 5).join(" ");
@@ -899,8 +922,9 @@ export default function Home() {
       const userMsg: Message = {
         id: crypto.randomUUID(),
         role: "user",
-        content,
+        content: fullContent,
         timestamp: Date.now(),
+        attachments,
       };
 
       // Use functional updater to safely append without overwriting concurrent changes
@@ -912,7 +936,7 @@ export default function Home() {
       // Track which conversation this send belongs to for onFinish
       sentConvIdRef.current = convId!;
 
-      sendMessage({ text: content });
+      sendMessage({ text: fullContent });
     },
     [createConversation, updateConversationById, sendMessage, currentConversationId]
   );

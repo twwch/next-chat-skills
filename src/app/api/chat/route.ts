@@ -27,13 +27,14 @@ function extractText(msg: IncomingMessage): string {
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const { messages, settings } = body as {
+  const { messages, settings, images } = body as {
     messages: IncomingMessage[];
     settings?: {
       openaiApiKey?: string;
       openaiBaseUrl?: string;
       model?: string;
     };
+    images?: Array<{ name: string; dataUrl: string }>;
   };
 
   const apiKey = settings?.openaiApiKey || process.env.OPENAI_API_KEY || "";
@@ -303,10 +304,34 @@ The ONLY way you can trigger external actions is through \`\`\`skill code blocks
 
 Be helpful, concise, and use skills when they are relevant to the user's request. Respond in the same language as the user.`;
 
+  // Inject images into the last user message for multimodal support
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const finalMessages: any[] = convertedMessages;
+  if (images && images.length > 0) {
+    const lastIdx = finalMessages.findLastIndex((m: { role: string }) => m.role === "user");
+    if (lastIdx >= 0) {
+      const msg = finalMessages[lastIdx];
+      finalMessages[lastIdx] = {
+        role: "user",
+        content: [
+          { type: "text", text: msg.content },
+          ...images.map((img: { name: string; dataUrl: string }) => {
+            const match = img.dataUrl.match(/^data:(image\/[\w+]+);base64,(.+)/);
+            return {
+              type: "image",
+              image: match ? match[2] : img.dataUrl,
+              mimeType: match ? match[1] : "image/png",
+            };
+          }),
+        ],
+      };
+    }
+  }
+
   const result = streamText({
     model: openai.chat(model),
     system: systemPrompt,
-    messages: convertedMessages,
+    messages: finalMessages,
     maxOutputTokens: 16384,
   });
 

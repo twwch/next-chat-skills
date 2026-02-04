@@ -296,6 +296,31 @@ export function MessageBubble({ message }: { message: Message }) {
           </span>
         </div>
 
+        {/* Attachment indicators */}
+        {message.attachments && message.attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {message.attachments.map((att, i) =>
+              att.type === "image" && att.dataUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={i}
+                  src={att.dataUrl}
+                  alt={att.name}
+                  className="w-32 h-32 rounded-lg object-cover border border-border-glass"
+                />
+              ) : (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-border-glass bg-bg-glass text-xs text-text-secondary"
+                >
+                  <FileText className="w-3.5 h-3.5 text-accent-blue" />
+                  {att.name}
+                </span>
+              )
+            )}
+          </div>
+        )}
+
         <div className="text-sm leading-relaxed text-text-secondary prose prose-invert prose-sm max-w-none prose-p:my-1 prose-headings:text-text-primary prose-strong:text-text-primary prose-a:text-accent-blue">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
