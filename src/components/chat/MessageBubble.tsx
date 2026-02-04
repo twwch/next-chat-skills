@@ -6,7 +6,7 @@ import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SkillInvokeCard } from "@/components/skill-cards/SkillInvokeCard";
-import { Code2, FileCode, FileText, FileJson, Braces, Eye } from "lucide-react";
+import { Code2, FileCode, FileText, FileJson, Braces, Eye, Download } from "lucide-react";
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString("en-US", {
@@ -40,11 +40,18 @@ const LANG_DISPLAY: Record<string, { label: string; icon: React.ReactNode }> = {
   svelte: { label: "Svelte", icon: <FileCode className="w-4 h-4" /> },
 };
 
-function getLangInfo(className?: string) {
+// Extract base language from className, stripping optional `:filename` suffix
+// e.g. "language-html:index.html" → "html"
+function parseLang(className?: string): string | null {
   if (!className) return null;
   const match = /language-(\S+)/.exec(className);
   if (!match) return null;
-  const lang = match[1].toLowerCase();
+  return match[1].toLowerCase().split(":")[0];
+}
+
+function getLangInfo(className?: string) {
+  const lang = parseLang(className);
+  if (!lang) return null;
   return (
     LANG_DISPLAY[lang] || {
       label: lang.toUpperCase(),
@@ -60,12 +67,49 @@ function extractTextContent(node: React.ReactNode): string {
   return "";
 }
 
+const LANG_EXT: Record<string, string> = {
+  html: "html", htm: "html", css: "css",
+  javascript: "js", js: "js", typescript: "ts", ts: "ts",
+  jsx: "jsx", tsx: "tsx", python: "py", py: "py",
+  json: "json", bash: "sh", sh: "sh", markdown: "md", md: "md",
+  yaml: "yml", yml: "yml", sql: "sql", xml: "xml", vue: "vue", svelte: "svelte",
+};
+
+// Extract filename from className
+// Supports "language-html:index.html" → "index.html"
+// Falls back to "download.{ext}" if no filename embedded
+function getFilename(className?: string): string {
+  if (!className) return "download.txt";
+  const match = /language-(\S+)/.exec(className);
+  if (!match) return "download.txt";
+  const raw = match[1].toLowerCase();
+  // lang:filename format (e.g. html:index.html)
+  const colonIdx = raw.indexOf(":");
+  if (colonIdx !== -1) {
+    return raw.slice(colonIdx + 1) || "download.txt";
+  }
+  const ext = LANG_EXT[raw] || raw;
+  return `download.${ext}`;
+}
+
+function downloadContent(content: string, filename: string) {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function HtmlCodeBlock({
   children,
   langInfo,
+  filename,
 }: {
   children: React.ReactNode;
   langInfo: { label: string; icon: React.ReactNode };
+  filename: string;
 }) {
   const [showPreview, setShowPreview] = useState(false);
   const rawHtml = extractTextContent(children);
@@ -79,21 +123,31 @@ function HtmlCodeBlock({
         <span className="font-heading text-[13px] font-semibold text-text-primary">
           {langInfo.label}
         </span>
-        <button
-          onClick={() => setShowPreview(!showPreview)}
-          className={`ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-            showPreview
-              ? "bg-accent-green/20 text-accent-green border border-accent-green/30"
-              : "bg-white/5 text-text-secondary hover:text-accent-green hover:bg-accent-green/10 border border-transparent"
-          }`}
-        >
-          {showPreview ? (
-            <Code2 className="w-3.5 h-3.5" />
-          ) : (
-            <Eye className="w-3.5 h-3.5" />
-          )}
-          {showPreview ? "Code" : "Preview"}
-        </button>
+        <div className="ml-auto flex items-center gap-1.5">
+          <button
+            onClick={() => downloadContent(rawHtml, filename)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer bg-white/5 text-text-secondary hover:text-accent-blue hover:bg-accent-blue/10 border border-transparent"
+            title={`Download ${filename}`}
+          >
+            <Download className="w-3.5 h-3.5" />
+            Download
+          </button>
+          <button
+            onClick={() => setShowPreview(!showPreview)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+              showPreview
+                ? "bg-accent-green/20 text-accent-green border border-accent-green/30"
+                : "bg-white/5 text-text-secondary hover:text-accent-green hover:bg-accent-green/10 border border-transparent"
+            }`}
+          >
+            {showPreview ? (
+              <Code2 className="w-3.5 h-3.5" />
+            ) : (
+              <Eye className="w-3.5 h-3.5" />
+            )}
+            {showPreview ? "Code" : "Preview"}
+          </button>
+        </div>
       </div>
 
       {showPreview ? (
@@ -148,13 +202,14 @@ const markdownComponents: Components = {
     const langInfo = getLangInfo(className);
     if (langInfo) {
       // HTML code blocks get a preview button
-      const langMatch = className ? /language-(\S+)/.exec(className) : null;
-      const lang = langMatch ? langMatch[1].toLowerCase() : "";
+      const lang = parseLang(className) || "";
+      const fname = getFilename(className);
       if (lang === "html" || lang === "htm") {
         return (
-          <HtmlCodeBlock langInfo={langInfo}>{children}</HtmlCodeBlock>
+          <HtmlCodeBlock langInfo={langInfo} filename={fname}>{children}</HtmlCodeBlock>
         );
       }
+      const codeText = extractTextContent(children);
       return (
         <div className="not-prose my-3 border border-border-glass rounded-2xl bg-bg-card overflow-hidden">
           {/* Card header */}
@@ -165,6 +220,14 @@ const markdownComponents: Components = {
             <span className="font-heading text-[13px] font-semibold text-text-primary">
               {langInfo.label}
             </span>
+            <button
+              onClick={() => downloadContent(codeText, fname)}
+              className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer bg-white/5 text-text-secondary hover:text-accent-blue hover:bg-accent-blue/10 border border-transparent"
+              title={`Download ${fname}`}
+            >
+              <Download className="w-3.5 h-3.5" />
+              Download
+            </button>
           </div>
           {/* macOS dots + code */}
           <div className="bg-terminal-bg">

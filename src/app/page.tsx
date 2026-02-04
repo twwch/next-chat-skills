@@ -37,7 +37,8 @@ function parseFileBlocks(content: string): {
           json: "json", md: "markdown", sh: "bash", yaml: "yaml", yml: "yaml",
         };
         const lang = langMap[ext] || ext;
-        return `> **File saved:** \`${trimmedPath}\`\n\n\`\`\`${lang}\n${fileContent}\`\`\``;
+        const filename = trimmedPath.split("/").pop() || "";
+        return `> **File saved:** \`${trimmedPath}\`\n\n\`\`\`${lang}:${filename}\n${fileContent}\`\`\``;
       }
       return _match;
     }

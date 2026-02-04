@@ -39,8 +39,11 @@ RUN addgroup --system --gid 1001 nodejs && \
 # Create data directory for SQLite
 RUN mkdir -p /app/data && chown nextjs:nodejs /app/data
 
-# Create skills directory
+# Create skills directory and pre-install skills
 RUN mkdir -p /home/nextjs/.claude/skills && chown -R nextjs:nodejs /home/nextjs/.claude
+ENV HOME=/home/nextjs
+RUN npx skills add https://github.com/vercel-labs/skills --skill find-skills --yes --global
+RUN npx skills add nextlevelbuilder/ui-ux-pro-max-skill --yes --global
 
 # Copy standalone build output
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./

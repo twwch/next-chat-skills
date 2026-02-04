@@ -9,13 +9,49 @@ function expandHome(p: string): string {
   return p;
 }
 
-export async function listSkills(skillsDir?: string): Promise<Skill[]> {
-  const dir = expandHome(
+// Default directories where skills may be installed
+const SKILLS_SEARCH_DIRS = [
+  "~/.claude/skills",
+  "~/.agents/skills",  // npx skills add default location
+];
+
+function collectSkillDirs(skillsDir?: string): string[] {
+  const dirs = new Set<string>();
+
+  // User-configured directory (env or parameter) takes priority
+  const primary = expandHome(
     skillsDir || process.env.SKILLS_DIR || "~/.claude/skills"
   );
+  dirs.add(primary);
 
-  if (!fs.existsSync(dir)) return [];
+  // Also search default locations
+  for (const d of SKILLS_SEARCH_DIRS) {
+    dirs.add(expandHome(d));
+  }
 
+  return Array.from(dirs);
+}
+
+export async function listSkills(skillsDir?: string): Promise<Skill[]> {
+  const searchDirs = collectSkillDirs(skillsDir);
+  const skills: Skill[] = [];
+  const seenNames = new Set<string>();
+
+  for (const dir of searchDirs) {
+    if (!fs.existsSync(dir)) continue;
+    const dirSkills = readSkillsFromDir(dir);
+    for (const skill of dirSkills) {
+      if (!seenNames.has(skill.name)) {
+        seenNames.add(skill.name);
+        skills.push(skill);
+      }
+    }
+  }
+
+  return skills;
+}
+
+function readSkillsFromDir(dir: string): Skill[] {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   const skills: Skill[] = [];
 
@@ -83,6 +119,10 @@ export async function listSkills(skillsDir?: string): Promise<Skill[]> {
   }
 
   return skills;
+}
+
+export async function listSkillsDirs(skillsDir?: string): Promise<string[]> {
+  return collectSkillDirs(skillsDir);
 }
 
 export async function getSkillDetail(

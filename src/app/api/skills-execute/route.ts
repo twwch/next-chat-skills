@@ -19,13 +19,26 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const skills = await listSkills();
-  const skill = skills.find((s) => s.name === skillName);
-  if (!skill) {
-    return new Response(JSON.stringify({ error: "Skill not found" }), {
-      status: 404,
-      headers: { "Content-Type": "application/json" },
-    });
+  // "system" is a built-in virtual skill for shell commands (e.g. installing skills)
+  const isSystem = skillName === "system";
+
+  let skill: Awaited<ReturnType<typeof listSkills>>[number] | undefined;
+  if (!isSystem) {
+    const skills = await listSkills();
+    skill = skills.find((s) => s.name === skillName);
+    if (!skill) {
+      return new Response(JSON.stringify({ error: "Skill not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  }
+
+  if (isSystem && !command) {
+    return new Response(
+      JSON.stringify({ error: "system skill requires a command" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
   }
 
   const stream = new ReadableStream({
@@ -56,7 +69,7 @@ export async function POST(req: NextRequest) {
       if (command) {
         executeShellCommand(command, os.homedir(), onEvent, onDone);
       } else {
-        executeSkillScript(skill.path, scriptPath!, args, onEvent, onDone);
+        executeSkillScript(skill!.path, scriptPath!, args, onEvent, onDone);
       }
     },
   });

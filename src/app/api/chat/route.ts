@@ -130,6 +130,18 @@ Only use command blocks when the skill's instructions explicitly mention a CLI c
 
 ${rulesSkillDetails || "No rules-based skills installed."}
 
+### 3. System skill (built-in)
+There is a built-in virtual skill called \`system\` that is ALWAYS available, even when no other skills are installed. Use it to run shell commands such as installing new skills:
+\`\`\`skill
+{
+  "skill": "system",
+  "action": "command",
+  "command": "npx skills add openstatusHQ/openstatus"
+}
+\`\`\`
+
+IMPORTANT: When the user asks to install a skill (e.g. \`npx skills add ...\`), ALWAYS use \`"skill": "system"\`. NEVER use any other skill name for system commands.
+
 ## Workflow: ALWAYS wait for skill results first
 
 CRITICAL: When a task requires executing a script or command skill:
