@@ -244,7 +244,7 @@ export default function Home() {
     setMessages,
   } = useChat({
     transport,
-    id: currentConversationId || undefined,
+    id: "main-chat",
     onFinish: ({ message: finishedMsg }) => {
       const convId = sentConvIdRef.current;
       if (!convId) return;

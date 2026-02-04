@@ -55,54 +55,57 @@ export function RightPanel() {
   }, [activities]);
 
   return (
-    <aside className="w-[300px] min-w-[300px] bg-bg-secondary border-l border-border-glass flex flex-col overflow-y-auto h-full">
-      <div className="px-4 py-3.5 border-b border-border-glass font-heading text-[13px] font-semibold flex items-center gap-2">
-        <Layers className="w-4 h-4 text-accent-green" />
-        Skill Context
+    <aside className="w-[300px] min-w-[300px] bg-bg-secondary border-l border-border-glass flex flex-col h-full overflow-hidden">
+      {/* Top: Skill Context (fixed) */}
+      <div className="shrink-0">
+        <div className="px-4 py-3.5 border-b border-border-glass font-heading text-[13px] font-semibold flex items-center gap-2">
+          <Layers className="w-4 h-4 text-accent-green" />
+          Skill Context
+        </div>
+
+        {/* Active Skill Card */}
+        {activeSkill ? (
+          <div className="m-3 p-3.5 rounded-xl border border-border-glass bg-bg-card">
+            <div className="w-9 h-9 rounded-lg bg-accent-green-dim text-accent-green flex items-center justify-center mb-2.5">
+              <Code2 className="w-5 h-5" />
+            </div>
+            <div className="font-heading text-sm font-semibold mb-1">
+              {activeSkill.name}
+            </div>
+            <div className="text-xs text-text-muted leading-relaxed mb-3 line-clamp-3">
+              {activeSkill.description}
+            </div>
+            <div className="space-y-0">
+              <MetaRow
+                label="Version"
+                value={activeSkill.version || "1.0.0"}
+              />
+              <MetaRow
+                label="Scripts"
+                value={`${activeSkill.scripts?.length || 0} available`}
+              />
+              <MetaRow
+                label="Last Used"
+                value={lastUsedTime || "just now"}
+              />
+              <MetaRow
+                label="Status"
+                value="active"
+                valueColor="text-accent-green"
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="m-3 p-6 text-center text-text-muted text-xs">
+            Click a skill in the sidebar to view details
+          </div>
+        )}
       </div>
 
-      {/* Active Skill Card */}
-      {activeSkill ? (
-        <div className="m-3 p-3.5 rounded-xl border border-border-glass bg-bg-card">
-          <div className="w-9 h-9 rounded-lg bg-accent-green-dim text-accent-green flex items-center justify-center mb-2.5">
-            <Code2 className="w-5 h-5" />
-          </div>
-          <div className="font-heading text-sm font-semibold mb-1">
-            {activeSkill.name}
-          </div>
-          <div className="text-xs text-text-muted leading-relaxed mb-3 line-clamp-3">
-            {activeSkill.description}
-          </div>
-          <div className="space-y-0">
-            <MetaRow
-              label="Version"
-              value={activeSkill.version || "1.0.0"}
-            />
-            <MetaRow
-              label="Scripts"
-              value={`${activeSkill.scripts?.length || 0} available`}
-            />
-            <MetaRow
-              label="Last Used"
-              value={lastUsedTime || "just now"}
-            />
-            <MetaRow
-              label="Status"
-              value="active"
-              valueColor="text-accent-green"
-            />
-          </div>
-        </div>
-      ) : (
-        <div className="m-3 p-6 text-center text-text-muted text-xs">
-          Click a skill in the sidebar to view details
-        </div>
-      )}
-
-      {/* Activity Timeline */}
+      {/* Middle: Activity Timeline (scrollable) */}
       {activities.length > 0 && (
-        <div className="px-4 pb-4">
-          <div className="text-xs font-semibold text-text-secondary mb-2.5 pt-3 border-t border-border-glass">
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
+          <div className="text-xs font-semibold text-text-secondary mb-2.5 pt-3 border-t border-border-glass sticky top-0 bg-bg-secondary pb-1">
             Activity Timeline
           </div>
           {activities.map((item, i) => (
@@ -115,8 +118,8 @@ export function RightPanel() {
         </div>
       )}
 
-      {/* Session Stats */}
-      <div className="m-3 mt-auto p-3.5 rounded-xl border border-border-glass bg-bg-card">
+      {/* Bottom: Session Stats (fixed) */}
+      <div className="shrink-0 m-3 mt-auto p-3.5 rounded-xl border border-border-glass bg-bg-card">
         <div className="font-heading text-xs font-semibold mb-2">
           Session Stats
         </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
 import type { Conversation, Settings, Skill, ActivityItem } from "@/types";
 import { DEFAULT_SETTINGS } from "@/types";
 
@@ -32,28 +32,6 @@ export function useApp() {
   return ctx;
 }
 
-const STORAGE_KEYS = {
-  conversations: "chat-skills-conversations",
-  settings: "chat-skills-settings",
-  currentId: "chat-skills-current-id",
-  activeSkillName: "chat-skills-active-skill",
-};
-
-function loadFromStorage<T>(key: string, fallback: T): T {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function saveToStorage(key: string, value: unknown) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(key, JSON.stringify(value));
-}
-
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
@@ -62,65 +40,54 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [activeSkill, setActiveSkill] = useState<Skill | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
+  // Debounce mechanism for rapid conversation updates (e.g., during skill streaming)
+  const pendingUpdates = useRef<Map<string, Conversation>>(new Map());
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function scheduleFlush() {
+    if (flushTimer.current) return;
+    flushTimer.current = setTimeout(async () => {
+      flushTimer.current = null;
+      const updates = new Map(pendingUpdates.current);
+      pendingUpdates.current.clear();
+      for (const [id, conv] of updates) {
+        fetch(`/api/db/conversations/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(conv),
+        }).catch(console.error);
+      }
+    }, 300);
+  }
+
+  // Hydrate state from database on mount
   useEffect(() => {
-    setConversations(loadFromStorage(STORAGE_KEYS.conversations, []));
-    setCurrentConversationId(loadFromStorage(STORAGE_KEYS.currentId, null));
-
-    // Load settings: merge localStorage with server-side .env.local defaults.
-    // Server env values fill in any blanks not explicitly set by the user.
-    const stored = loadFromStorage<Settings | null>(STORAGE_KEYS.settings, null);
-
-    fetch("/api/settings")
-      .then((res) => res.json())
-      .then((envDefaults: Settings) => {
-        const merged: Settings = {
-          openaiApiKey: stored?.openaiApiKey || envDefaults.openaiApiKey || "",
-          openaiBaseUrl: stored?.openaiBaseUrl || envDefaults.openaiBaseUrl || DEFAULT_SETTINGS.openaiBaseUrl,
-          model: stored?.model || envDefaults.model || DEFAULT_SETTINGS.model,
-          skillsDir: stored?.skillsDir || envDefaults.skillsDir || DEFAULT_SETTINGS.skillsDir,
-        };
-        setSettingsState(merged);
+    async function hydrate() {
+      try {
+        const [convRes, settingsRes] = await Promise.all([
+          fetch('/api/db/conversations'),
+          fetch('/api/db/settings'),
+        ]);
+        if (convRes.ok) {
+          const convs: Conversation[] = await convRes.json();
+          setConversations(convs);
+        }
+        if (settingsRes.ok) {
+          const s: Settings = await settingsRes.json();
+          setSettingsState(s);
+        }
+      } catch {
+        // Falls back to defaults on error
+      } finally {
         setHydrated(true);
-      })
-      .catch(() => {
-        // If the fetch fails, fall back to localStorage or defaults
-        setSettingsState(stored ?? DEFAULT_SETTINGS);
-        setHydrated(true);
-      });
-  }, []);
-
-  useEffect(() => {
-    if (hydrated) saveToStorage(STORAGE_KEYS.conversations, conversations);
-  }, [conversations, hydrated]);
-
-  useEffect(() => {
-    if (hydrated) saveToStorage(STORAGE_KEYS.settings, settings);
-  }, [settings, hydrated]);
-
-  useEffect(() => {
-    if (hydrated) saveToStorage(STORAGE_KEYS.currentId, currentConversationId);
-  }, [currentConversationId, hydrated]);
-
-  // Restore activeSkill by name once skills are loaded
-  useEffect(() => {
-    if (skills.length > 0 && !activeSkill) {
-      const savedName = loadFromStorage<string | null>(STORAGE_KEYS.activeSkillName, null);
-      if (savedName) {
-        const found = skills.find((s) => s.name === savedName);
-        if (found) setActiveSkill(found);
       }
     }
-  }, [skills, activeSkill]);
-
-  // Persist activeSkill name
-  useEffect(() => {
-    if (hydrated) saveToStorage(STORAGE_KEYS.activeSkillName, activeSkill?.name || null);
-  }, [activeSkill, hydrated]);
+    hydrate();
+  }, []);
 
   const currentConversation =
     conversations.find((c) => c.id === currentConversationId) ?? null;
 
-  // Activities are stored per-conversation, so switching automatically shows the right data
   const activities = currentConversation?.activities || [];
 
   const createConversation = useCallback((title?: string) => {
@@ -132,22 +99,47 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       messages: [],
       activities: [],
     };
+    // Optimistic local update
     setConversations((prev) => [conv, ...prev]);
     setCurrentConversationId(conv.id);
+
+    // Background persist
+    fetch('/api/db/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(conv),
+    }).catch(console.error);
+
     return conv;
   }, []);
 
   const updateConversation = useCallback((conv: Conversation) => {
+    const updated = { ...conv, updatedAt: Date.now() };
     setConversations((prev) =>
-      prev.map((c) => (c.id === conv.id ? { ...conv, updatedAt: Date.now() } : c))
+      prev.map((c) => (c.id === conv.id ? updated : c))
     );
+
+    // Debounced persist
+    pendingUpdates.current.set(conv.id, updated);
+    scheduleFlush();
   }, []);
 
   const updateConversationById = useCallback(
     (id: string, updater: (conv: Conversation) => Conversation) => {
+      let updated: Conversation | null = null;
       setConversations((prev) =>
-        prev.map((c) => (c.id === id ? { ...updater(c), updatedAt: Date.now() } : c))
+        prev.map((c) => {
+          if (c.id !== id) return c;
+          updated = { ...updater(c), updatedAt: Date.now() };
+          return updated;
+        })
       );
+
+      // Debounced persist
+      if (updated) {
+        pendingUpdates.current.set(id, updated);
+        scheduleFlush();
+      }
     },
     []
   );
@@ -156,15 +148,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     (id: string) => {
       setConversations((prev) => prev.filter((c) => c.id !== id));
       if (currentConversationId === id) setCurrentConversationId(null);
+
+      fetch(`/api/db/conversations/${id}`, { method: 'DELETE' }).catch(console.error);
     },
     [currentConversationId]
   );
 
   const setSettings = useCallback((s: Settings) => {
     setSettingsState(s);
+
+    fetch('/api/db/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    }).catch(console.error);
   }, []);
 
-  // Add activity to a specific conversation (defaults to current)
   const addActivity = useCallback((a: ActivityItem, convId?: string) => {
     const targetId = convId || currentConversationId;
     if (!targetId) return;
@@ -175,6 +174,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           : c
       )
     );
+
+    fetch(`/api/db/conversations/${targetId}/activities`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(a),
+    }).catch(console.error);
   }, [currentConversationId]);
 
   const clearActivities = useCallback(() => {
@@ -186,6 +191,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           : c
       )
     );
+
+    fetch(`/api/db/conversations/${currentConversationId}/activities`, {
+      method: 'DELETE',
+    }).catch(console.error);
   }, [currentConversationId]);
 
   return (
@@ -210,7 +219,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         clearActivities,
       }}
     >
-      {children}
+      {hydrated ? children : null}
     </AppContext.Provider>
   );
 }
