@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useApp } from "@/providers/AppProvider";
-import { Paperclip, Mic, Send, Plus, Code2, Monitor, Wrench } from "lucide-react";
+import { Paperclip, Mic, Send, Square, Plus, Code2, Monitor, Wrench, ChevronDown, Bot, Check } from "lucide-react";
 
 const SKILL_CHIP_ICONS: Record<string, React.ReactNode> = {
   "code-generator": <Code2 className="w-3.5 h-3.5" />,
@@ -13,12 +13,30 @@ const SKILL_CHIP_ICONS: Record<string, React.ReactNode> = {
 interface InputAreaProps {
   onSend: (content: string) => void;
   isLoading: boolean;
+  onStop?: () => void;
+  models: string[];
+  selectedModel: string;
+  onModelChange: (model: string) => void;
 }
 
-export function InputArea({ onSend, isLoading }: InputAreaProps) {
+export function InputArea({ onSend, isLoading, onStop, models, selectedModel, onModelChange }: InputAreaProps) {
   const [text, setText] = useState("");
+  const [modelOpen, setModelOpen] = useState(false);
+  const modelRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { skills } = useApp();
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!modelOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (modelRef.current && !modelRef.current.contains(e.target as Node)) {
+        setModelOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [modelOpen]);
 
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
@@ -95,28 +113,58 @@ export function InputArea({ onSend, isLoading }: InputAreaProps) {
             <button className="w-8 h-8 rounded-lg bg-transparent text-text-muted flex items-center justify-center hover:bg-bg-glass hover:text-text-primary transition-all cursor-pointer">
               <Mic className="w-[18px] h-[18px]" />
             </button>
-            <button
-              onClick={handleSend}
-              disabled={!text.trim() || isLoading}
-              className="w-8 h-8 rounded-lg bg-accent-green text-white flex items-center justify-center hover:bg-green-600 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Send className="w-4 h-4" />
-            </button>
+            {isLoading ? (
+              <button
+                onClick={onStop}
+                className="w-8 h-8 rounded-lg bg-red-500 text-white flex items-center justify-center hover:bg-red-600 transition-all cursor-pointer"
+              >
+                <Square className="w-3.5 h-3.5 fill-current" />
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={!text.trim()}
+                className="w-8 h-8 rounded-lg bg-accent-green text-white flex items-center justify-center hover:bg-green-600 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Hints */}
+        {/* Model selector + hints */}
         <div className="flex items-center justify-between mt-2 text-[11px] text-text-muted">
-          <span>
-            <kbd className="px-1 py-px rounded border border-border-glass bg-bg-glass font-mono text-[10px]">
-              Enter
-            </kbd>{" "}
-            to send,{" "}
-            <kbd className="px-1 py-px rounded border border-border-glass bg-bg-glass font-mono text-[10px]">
-              Shift+Enter
-            </kbd>{" "}
-            for new line
-          </span>
+          {/* Model selector */}
+          <div className="relative" ref={modelRef}>
+            <button
+              onClick={() => setModelOpen((v) => !v)}
+              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-bg-glass transition-colors cursor-pointer"
+            >
+              <Bot className="w-3.5 h-3.5" />
+              <span className="font-medium text-text-secondary">{selectedModel}</span>
+              <ChevronDown className="w-3 h-3" />
+            </button>
+            {modelOpen && models.length > 0 && (
+              <div className="absolute bottom-full left-0 mb-1 w-72 max-h-64 overflow-y-auto rounded-xl border border-white/[0.12] bg-bg-secondary shadow-2xl shadow-black/50 z-50 py-1 backdrop-blur-xl [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/15 [&::-webkit-scrollbar-thumb]:rounded-full">
+                {models.map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => { onModelChange(m); setModelOpen(false); }}
+                    className={`w-full text-left px-3 py-2 text-[12px] hover:bg-white/[0.08] transition-colors cursor-pointer flex items-center gap-2 ${
+                      m === selectedModel ? "text-accent-green font-medium" : "text-text-primary"
+                    }`}
+                  >
+                    {m === selectedModel ? (
+                      <Check className="w-3.5 h-3.5 shrink-0" />
+                    ) : (
+                      <span className="w-3.5 shrink-0" />
+                    )}
+                    <span className="truncate">{m}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <span>Powered by Chat-Skills Engine</span>
         </div>
       </div>

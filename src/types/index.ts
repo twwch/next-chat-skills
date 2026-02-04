@@ -19,12 +19,17 @@ export interface Message {
 export interface SkillInvocation {
   id: string
   skillName: string
-  type: 'script' | 'deps' | 'files'
+  type: 'script' | 'deps' | 'files' | 'reference' | 'subagent'
   status: 'running' | 'success' | 'error'
-  data: TerminalData | DepsData | FilesData
+  data: TerminalData | DepsData | FilesData | ReferenceData | SubagentData
   scriptPath?: string
   command?: string
   args?: string[]
+  reference?: string
+  stdin?: string
+  timeout?: number
+  subagentPrompt?: string
+  subagentImages?: string[]
 }
 
 export interface TerminalData {
@@ -64,6 +69,17 @@ export interface FileNode {
   depth: number
   tag?: 'new' | 'modified' | 'deleted'
   icon?: 'ts' | 'tsx' | 'css' | 'json' | 'folder' | 'md' | 'py' | 'js'
+}
+
+export interface ReferenceData {
+  filename: string
+  content?: string
+}
+
+export interface SubagentData {
+  prompt: string
+  images: string[]
+  result?: string
 }
 
 export interface FileDiff {

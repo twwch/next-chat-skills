@@ -56,66 +56,173 @@ export async function POST(req: Request) {
     baseURL,
   });
 
-  const skills = await listSkills();
+  const allSkills = await listSkills();
+  const allSkillNames = allSkills.map((s) => s.name);
 
-  // Classify skills into three types:
-  // [script] - has executable scripts (e.g. ui-ux-pro-max)
-  // [rules]  - no scripts, provides guidelines/instructions the AI follows directly
-  function skillType(s: typeof skills[number]): "script" | "rules" {
-    return s.hasScripts ? "script" : "rules";
+  // Convert incoming UIMessages to the format streamText expects (needed early for @mention extraction)
+  const convertedMessages = messages
+    .map((m) => {
+      const text = extractText(m);
+      if (!text) return null;
+      return {
+        role: m.role as "user" | "assistant" | "system",
+        content: text,
+      };
+    })
+    .filter((m): m is NonNullable<typeof m> => m !== null);
+
+  // Extract @mentions from the latest user message BEFORE building the prompt.
+  // If the user @mentions specific skills, only include those in the prompt
+  // so the AI cannot see or invoke any other skill.
+  const lastUserMsg = [...convertedMessages].reverse().find((m) => m.role === "user");
+  const mentions = lastUserMsg
+    ? Array.from(lastUserMsg.content.matchAll(/@([\w-]+)/g)).map((m) => m[1])
+    : [];
+  const matchedMentions = mentions.filter((m) => allSkillNames.includes(m));
+  const unmatchedMentions = mentions.filter((m) => !allSkillNames.includes(m));
+
+  // Filter skills: if user used @mentions, only show matched skills in the prompt.
+  // If none matched, show NO skills so the AI can't pick a wrong one.
+  const hasMentions = mentions.length > 0;
+  const skills = hasMentions
+    ? allSkills.filter((s) => matchedMentions.includes(s.name))
+    : allSkills;
+
+  // Inject system messages for unmatched @mentions
+  if (unmatchedMentions.length > 0) {
+    convertedMessages.push({
+      role: "system" as const,
+      content: `[SYSTEM] The user mentioned ${unmatchedMentions.map((n) => "@" + n).join(", ")} but NO skill with ${unmatchedMentions.length === 1 ? "that name exists" : "those names exist"}. Do NOT use any skill as a substitute. Handle the request with your own capabilities. Do NOT output any \`\`\`skill code blocks.`,
+    });
   }
 
+  // Build skill overview list with full script paths (scripts/xxx.py)
   const skillsContext = skills
-    .map(
-      (s) =>
-        `- **${s.name}** [${skillType(s)}]: ${s.description}${s.hasScripts ? ` (scripts: ${s.scripts?.join(", ")})` : ""}`
-    )
+    .map((s) => {
+      const scriptList = s.hasScripts && s.scripts?.length
+        ? ` (scripts: ${s.scripts.map((f) => "scripts/" + f).join(", ")})`
+        : "";
+      return `- **${s.name}**: ${s.description}${scriptList}`;
+    })
     .join("\n");
 
-  // For non-script skills, read their SKILL.md content so the AI knows how to use them
-  const rulesSkillDetails = skills
-    .filter((s) => !s.hasScripts)
+  // Read SKILL.md content for skills; include path and list reference filenames (loaded on demand)
+  const skillDetails = skills
     .map((s) => {
+      const parts: string[] = [];
+      // Read SKILL.md — include the skill's absolute path for correct script resolution
       try {
         const content = fs.readFileSync(path.join(s.path, "SKILL.md"), "utf-8");
-        return `### ${s.name}\n\n${content}`;
+        parts.push(`### ${s.name}\n\n**Path:** \`${s.path}\`\n\n${content}`);
       } catch {
-        return `### ${s.name}\n\nNo detailed instructions available.`;
+        parts.push(`### ${s.name}\n\n**Path:** \`${s.path}\`\n\nNo detailed instructions available.`);
       }
+      // List available references (filenames only, not content)
+      const refsDir = path.join(s.path, "references");
+      if (fs.existsSync(refsDir)) {
+        try {
+          const refFiles = fs.readdirSync(refsDir).filter((f) => f.endsWith(".md"));
+          if (refFiles.length > 0) {
+            parts.push(`**Available references:** ${refFiles.join(", ")}`);
+          }
+        } catch {
+          // ignore
+        }
+      }
+      return parts.join("\n\n");
     })
     .join("\n\n---\n\n");
 
-  const systemPrompt = `You are Chat-Skills, an AI assistant that can leverage installed skills to help users. You have access to the following skills:
+  // Build an explicit allow-list of skill names for strict matching
+  const skillNameList = skills.map((s) => s.name);
+  const skillNameListStr = skillNameList.length > 0
+    ? skillNameList.map((n) => `\`${n}\``).join(", ")
+    : "(none)";
+
+  const systemPrompt = `You are Chat-Skills, an AI assistant that can leverage installed skills to help users.
+
+## ⚠️ SKILL MATCHING RULES (READ FIRST — HIGHEST PRIORITY)
+
+The ONLY installed skill names are: ${skillNameListStr}
+
+When the user writes \`@something\` in their message:
+1. Check if "something" **exactly matches** one of the installed skill names listed above
+2. If YES → use that skill, follow its SKILL.md
+3. If NO → do NOT use ANY skill. Handle the request yourself. You may tell the user the skill is not installed.
+
+**ABSOLUTE RULES:**
+- NEVER use a skill whose name does not exactly match the @mention
+- NEVER substitute a similar or related skill (e.g. user says \`@pptx\` → there is no "pptx" skill → do NOT use "ui-ux-pro-max" or any other skill)
+- Without an @mention, only use a skill when the request exactly matches a skill's purpose (e.g. user asks "summarize this meeting" → use \`meeting-summary\`)
+- When in doubt, do NOT use any skill
+
+---
+
+## Installed Skills
 
 ${skillsContext || "No skills installed."}
 
-## Skill Types
+## Installed Skills Details
 
-### 1. Script-based skills (marked [script])
-These skills have executable scripts. Invoke them using a skill block:
+${skillDetails || "No skills installed."}
+
+---
+
+## How to Use Skills
+
+Every skill has a SKILL.md that defines its instructions, output format, and workflow. You MUST follow the SKILL.md instructions when using a skill.
+
+### 1. Follow SKILL.md instructions FIRST
+When a user request matches a skill (via @mention or by context), follow the instructions in its SKILL.md directly. Most skills work by providing guidelines, output formats, and workflows that you follow — NO script execution needed.
+
+### 2. Execute scripts ONLY when SKILL.md says to
+Scripts are optional tools within a skill. Only invoke a script when the SKILL.md explicitly instructs you to do so (e.g. "run upload.py after generating the summary", "use search.py to find design recommendations").
+
+To execute a script:
 \`\`\`skill
 {
   "skill": "skill-name",
   "action": "execute",
   "script": "scripts/script-name.py",
-  "args": ["arg1", "--flag", "value"]
+  "args": ["arg1", "--flag", "value"],
+  "stdin": "optional data to pipe to script stdin",
+  "timeout": 30
 }
 \`\`\`
 
-IMPORTANT: Only use script paths that are listed in the skill's scripts list above. NEVER guess script names like "core.py" or "main.py".
+- **stdin**: If the script reads from stdin, provide the data here (e.g. JSON content for upload scripts)
+- **timeout**: Max seconds the script can run (default: 60). Use the timeout value from SKILL.md if specified.
 
-#### ui-ux-pro-max
-The ONLY executable script is \`scripts/search.py\` (NOT core.py or design_system.py).
-- The first arg must be a single quoted search query string
-- Use \`--design-system\` flag for full design recommendations
-- Example: \`"args": ["SaaS dashboard fintech", "--design-system", "-p", "MyProject"]\`
-- For domain-specific search: \`"args": ["animation accessibility", "--domain", "ux"]\`
-- For stack guidelines: \`"args": ["layout responsive", "--stack", "nextjs"]\`
+IMPORTANT: Only use script paths listed in the skill's scripts list. NEVER guess script names.
 
-### 2. Rules-based skills (marked [rules])
-These skills have NO executable scripts. They provide instructions and guidelines that you should follow DIRECTLY. Do NOT generate \`\`\`skill blocks for these skills — just follow their instructions.
+### 3. Load references on demand
+Skills may have reference files (listed as "Available references" above). Load a reference ONLY when the SKILL.md says it's needed for the current context (e.g. "load finance-handbook.md when meeting involves budgets"):
+\`\`\`skill
+{
+  "skill": "skill-name",
+  "action": "load-reference",
+  "reference": "filename.md"
+}
+\`\`\`
 
-Some rules skills may instruct you to run shell commands (e.g. \`npx skills find\`). In that case, use a command skill block:
+### 4. Use subagents for visual inspection
+Some skills (e.g. pptx) require visual QA using subagents. A subagent is a separate AI call that analyzes images with fresh eyes. Use this when a SKILL.md instructs you to "use subagents":
+\`\`\`skill
+{
+  "skill": "skill-name",
+  "action": "subagent",
+  "prompt": "Your inspection prompt here — describe what to look for and list image paths",
+  "images": ["/tmp/chat-skills-output/project/slide-01.jpg", "/tmp/chat-skills-output/project/slide-02.jpg"]
+}
+\`\`\`
+
+- **prompt**: The full inspection prompt (include what to check and expected content per image)
+- **images**: Array of absolute paths to image files on disk (JPG, PNG, etc.)
+- The subagent will analyze the images and return findings
+- Use the subagent results to fix any issues found, then re-verify
+
+### 5. Run shell commands when instructed
+Some skills may instruct you to run shell commands (e.g. \`npx skills find\`):
 \`\`\`skill
 {
   "skill": "skill-name",
@@ -124,42 +231,40 @@ Some rules skills may instruct you to run shell commands (e.g. \`npx skills find
 }
 \`\`\`
 
-Only use command blocks when the skill's instructions explicitly mention a CLI command to run. If the skill only provides writing guidelines, workflows, or best practices, follow them directly WITHOUT any skill block.
-
-## Rules Skills Reference
-
-${rulesSkillDetails || "No rules-based skills installed."}
-
-### 3. System skill (built-in)
-There is a built-in virtual skill called \`system\` that is ALWAYS available, even when no other skills are installed. Use it to run shell commands such as installing new skills:
+### 6. System skill (built-in)
+The \`system\` skill is ALWAYS available for running system-level commands like installing skills:
 \`\`\`skill
 {
   "skill": "system",
   "action": "command",
-  "command": "npx skills add openstatusHQ/openstatus"
+  "command": "npx skills add -g --yes openstatusHQ/openstatus"
 }
 \`\`\`
 
-IMPORTANT: When the user asks to install a skill (e.g. \`npx skills add ...\`), ALWAYS use \`"skill": "system"\`. NEVER use any other skill name for system commands.
+IMPORTANT: When installing skills, ALWAYS use \`"skill": "system"\`.
 
-## Workflow: ALWAYS wait for skill results first
+## Workflow: Wait for script/reference results
 
-CRITICAL: When a task requires executing a script or command skill:
-1. Invoke the skill FIRST
-2. Tell the user you are waiting for the results
-3. Do NOT generate any files or code yet. STOP after invoking the skill.
-4. The system will automatically send you the skill results when the script finishes.
-5. ONLY THEN should you generate files/code using those results.
-
-This ensures the generated output is based on actual skill data, not guesses. Never create files before receiving skill execution results.
+When you invoke a script, command, or load-reference action:
+1. Invoke it FIRST
+2. Tell the user you are waiting for results
+3. Do NOT generate final output yet — STOP after invoking
+4. The system will send you the results automatically
+5. ONLY THEN continue with your response using those results
 
 ## File Creation
 
-When the task requires creating files (e.g. HTML prototypes, code), use FOUR backticks (\`\`\`\`) as the delimiter so inner code blocks (triple backticks) don't break parsing:
+**CRITICAL: ALL generated files MUST be saved under \`/tmp/chat-skills-output/\`. NEVER save files to the user's home directory, desktop, or any other location. This is a strict security rule — no exceptions.**
+
+When the task requires creating files (e.g. HTML prototypes, code, PPTX, PDF), use FOUR backticks (\`\`\`\`) as the delimiter so inner code blocks (triple backticks) don't break parsing:
 
 \`\`\`\`file:/tmp/chat-skills-output/<project-name>/filename.ext
 <file content here — can safely contain \`\`\` code blocks>
 \`\`\`\`
+
+When scripts generate files, you MUST pass output paths under \`/tmp/chat-skills-output/<project-name>/\` as arguments. For example:
+- \`"args": ["/tmp/chat-skills-output/my-ppt/output.pptx"]\`
+- NEVER use paths like \`~/filename\`, \`./filename\`, or \`/Users/xxx/filename\`
 
 ### Project directory rules:
 1. ALWAYS create a project subdirectory under /tmp/chat-skills-output/ — NEVER put files directly in the root
@@ -177,28 +282,32 @@ IMPORTANT:
 - The path MUST start with /tmp/chat-skills-output/
 - After creating files, tell the user the full file path so they can open it
 
+## Dependency Management
+
+When a script or command fails due to a missing dependency (e.g. "command not found", "No module named ...", "Cannot find module ..."), you MUST install the missing dependency and retry — do NOT switch to an alternative package or workaround. Use the system skill to install:
+- System commands: \`brew install <pkg>\` (macOS) or \`apt-get install -y <pkg>\` (Linux)
+- Python packages: \`pip install <pkg>\`
+- Node.js packages: \`npm install -g <pkg>\`
+
+Example: if \`pdftoppm\` is not found, install it via \`brew install poppler\` (macOS) or \`apt-get install -y poppler-utils\` (Linux), then retry the original command.
+
 ## Script Results
 
 When a user message starts with "[Skill execution result", it contains output from a skill script you previously invoked. Use this output to continue the task (e.g. apply design recommendations to generate code). Do NOT re-invoke the same skill. Continue working with the results.
 
-Be helpful, concise, and use skills when they are relevant to the user's request. Respond in the same language as the user.`;
+## IMPORTANT: No Tool Calling
 
-  // Convert incoming UIMessages to the format streamText expects
-  const convertedMessages = messages
-    .map((m) => {
-      const text = extractText(m);
-      if (!text) return null;
-      return {
-        role: m.role as "user" | "assistant" | "system",
-        content: text,
-      };
-    })
-    .filter((m): m is NonNullable<typeof m> => m !== null);
+You do NOT have access to any tools, function calling, or APIs. NEVER output \`<function_calls>\`, \`<invoke>\`, \`<tool_call>\`, or any XML/JSON-style tool invocations. You cannot read images, open files, browse the web, or execute code directly.
+
+The ONLY way you can trigger external actions is through \`\`\`skill code blocks as documented above. Everything else must be plain text/markdown output.
+
+Be helpful, concise, and use skills when they are relevant to the user's request. Respond in the same language as the user.`;
 
   const result = streamText({
     model: openai.chat(model),
     system: systemPrompt,
     messages: convertedMessages,
+    maxOutputTokens: 16384,
   });
 
   return result.toUIMessageStreamResponse();

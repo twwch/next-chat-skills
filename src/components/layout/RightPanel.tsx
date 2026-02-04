@@ -126,14 +126,7 @@ export function RightPanel() {
         <MetaRow label="Skills Called" value={String(stats.skillsCalled)} />
         <MetaRow label="Scripts Run" value={String(stats.scriptsRun)} />
         <MetaRow label="Files Changed" value={String(stats.filesChanged)} />
-        <MetaRow
-          label="Deps Installed"
-          value={
-            stats.depsInstalled > 0
-              ? String(stats.depsInstalled)
-              : String(currentConversation?.messages.length || 0)
-          }
-        />
+        <MetaRow label="Deps Installed" value={String(stats.depsInstalled)} />
       </div>
     </aside>
   );

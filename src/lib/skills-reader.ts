@@ -19,14 +19,15 @@ function collectSkillDirs(skillsDir?: string): string[] {
   const dirs = new Set<string>();
 
   // User-configured directory (env or parameter) takes priority
-  const primary = expandHome(
+  // Always resolve to absolute paths so script execution works correctly
+  const primary = path.resolve(expandHome(
     skillsDir || process.env.SKILLS_DIR || "~/.claude/skills"
-  );
+  ));
   dirs.add(primary);
 
   // Also search default locations
   for (const d of SKILLS_SEARCH_DIRS) {
-    dirs.add(expandHome(d));
+    dirs.add(path.resolve(expandHome(d)));
   }
 
   return Array.from(dirs);

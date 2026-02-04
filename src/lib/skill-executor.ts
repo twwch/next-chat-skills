@@ -1,7 +1,28 @@
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
 import path from "path";
 import fs from "fs";
 import os from "os";
+
+// Cache the global npm modules path so we only run `npm root -g` once.
+let _globalNodeModules: string | null = null;
+function getGlobalNodeModules(): string {
+  if (_globalNodeModules === null) {
+    try {
+      _globalNodeModules = execSync("npm root -g", { encoding: "utf-8" }).trim();
+    } catch {
+      _globalNodeModules = "";
+    }
+  }
+  return _globalNodeModules;
+}
+
+// Build NODE_PATH that includes the global npm modules directory.
+function buildNodePath(): string {
+  const globalRoot = getGlobalNodeModules();
+  const existing = process.env.NODE_PATH || "";
+  if (!globalRoot) return existing;
+  return existing ? `${existing}${path.delimiter}${globalRoot}` : globalRoot;
+}
 
 function expandHome(p: string): string {
   if (p.startsWith("~/")) return path.join(os.homedir(), p.slice(2));
@@ -67,7 +88,8 @@ export function executeSkillScript(
   scriptPath: string,
   args: string[],
   onEvent: (event: ExecutionEvent) => void,
-  onDone: () => void
+  onDone: () => void,
+  options?: { stdin?: string; timeout?: number }
 ): () => void {
   const resolvedSkillPath = expandHome(skillPath);
   const fullScriptPath = path.join(resolvedSkillPath, scriptPath);
@@ -107,9 +129,32 @@ export function executeSkillScript(
 
   const child = spawn(cmd, cmdArgs, {
     cwd: resolvedSkillPath,
-    env: { ...process.env },
+    env: { ...process.env, NODE_PATH: buildNodePath() },
     shell: false,
   });
+
+  // Write stdin data if provided, then close; otherwise close immediately
+  // to prevent scripts that read stdin from hanging forever.
+  if (options?.stdin) {
+    child.stdin.write(options.stdin);
+  }
+  child.stdin.end();
+
+  // Timeout: kill the process if it exceeds the limit (default 60s)
+  const timeoutMs = (options?.timeout ?? 60) * 1000;
+  let killed = false;
+  const timer = setTimeout(() => {
+    killed = true;
+    onEvent({
+      type: "line",
+      line: { type: "error", text: `Script timed out after ${options?.timeout ?? 60}s` },
+    });
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // ignore
+    }
+  }, timeoutMs);
 
   const emitStdout = createDeduplicatedEmitter(onEvent);
   const emitStderr = createDeduplicatedEmitter(onEvent);
@@ -127,11 +172,13 @@ export function executeSkillScript(
   });
 
   child.on("close", (code) => {
-    onEvent({ type: "exit", code: code ?? 0 });
+    clearTimeout(timer);
+    onEvent({ type: "exit", code: killed ? 124 : (code ?? 0) });
     onDone();
   });
 
   child.on("error", (err) => {
+    clearTimeout(timer);
     onEvent({
       type: "line",
       line: { type: "error", text: `Process error: ${err.message}` },
@@ -141,6 +188,7 @@ export function executeSkillScript(
   });
 
   return () => {
+    clearTimeout(timer);
     try {
       child.kill("SIGTERM");
     } catch {
@@ -149,12 +197,32 @@ export function executeSkillScript(
   };
 }
 
+// Normalize "skills add" commands for non-interactive execution:
+// - Add -g to install globally (skip global/local prompt)
+// - Add --yes to skip confirmation prompts
+// Result: npx skills add -g --yes <repo>
+function normalizeCommand(command: string): string {
+  if (/\bskills\s+add\b/.test(command)) {
+    const hasG = /(^|\s)(-g|--global)(\s|$)/.test(command);
+    const hasYes = /(^|\s)--yes(\s|$)/.test(command);
+    if (!hasG || !hasYes) {
+      const flags: string[] = [];
+      if (!hasG) flags.push("-g");
+      if (!hasYes) flags.push("--yes");
+      command = command.replace(/\bskills\s+add\b/, `skills add ${flags.join(" ")}`);
+    }
+  }
+  return command;
+}
+
 export function executeShellCommand(
   command: string,
   cwd: string,
   onEvent: (event: ExecutionEvent) => void,
   onDone: () => void
 ): () => void {
+  command = normalizeCommand(command);
+
   onEvent({
     type: "line",
     line: { type: "cmd", text: `$ ${command}` },
@@ -162,7 +230,7 @@ export function executeShellCommand(
 
   const child = spawn(command, {
     cwd,
-    env: { ...process.env },
+    env: { ...process.env, NODE_PATH: buildNodePath() },
     shell: true,
   });
 

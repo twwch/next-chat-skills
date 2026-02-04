@@ -49,6 +49,13 @@ function parseLang(className?: string): string | null {
   return match[1].toLowerCase().split(":")[0];
 }
 
+// Check if the code block is a file block (has `:filename` embedded in the language tag)
+function isFileBlock(className?: string): boolean {
+  if (!className) return false;
+  const match = /language-(\S+)/.exec(className);
+  return !!match && match[1].includes(":");
+}
+
 function getLangInfo(className?: string) {
   const lang = parseLang(className);
   if (!lang) return null;
@@ -106,10 +113,12 @@ function HtmlCodeBlock({
   children,
   langInfo,
   filename,
+  showDownload,
 }: {
   children: React.ReactNode;
   langInfo: { label: string; icon: React.ReactNode };
   filename: string;
+  showDownload: boolean;
 }) {
   const [showPreview, setShowPreview] = useState(false);
   const rawHtml = extractTextContent(children);
@@ -124,14 +133,16 @@ function HtmlCodeBlock({
           {langInfo.label}
         </span>
         <div className="ml-auto flex items-center gap-1.5">
-          <button
-            onClick={() => downloadContent(rawHtml, filename)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer bg-white/5 text-text-secondary hover:text-accent-blue hover:bg-accent-blue/10 border border-transparent"
-            title={`Download ${filename}`}
-          >
-            <Download className="w-3.5 h-3.5" />
-            Download
-          </button>
+          {showDownload && (
+            <button
+              onClick={() => downloadContent(rawHtml, filename)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer bg-white/5 text-text-secondary hover:text-accent-blue hover:bg-accent-blue/10 border border-transparent"
+              title={`Download ${filename}`}
+            >
+              <Download className="w-3.5 h-3.5" />
+              Download
+            </button>
+          )}
           <button
             onClick={() => setShowPreview(!showPreview)}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
@@ -204,9 +215,10 @@ const markdownComponents: Components = {
       // HTML code blocks get a preview button
       const lang = parseLang(className) || "";
       const fname = getFilename(className);
+      const hasFile = isFileBlock(className);
       if (lang === "html" || lang === "htm") {
         return (
-          <HtmlCodeBlock langInfo={langInfo} filename={fname}>{children}</HtmlCodeBlock>
+          <HtmlCodeBlock langInfo={langInfo} filename={fname} showDownload={hasFile}>{children}</HtmlCodeBlock>
         );
       }
       const codeText = extractTextContent(children);
@@ -220,14 +232,16 @@ const markdownComponents: Components = {
             <span className="font-heading text-[13px] font-semibold text-text-primary">
               {langInfo.label}
             </span>
-            <button
-              onClick={() => downloadContent(codeText, fname)}
-              className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer bg-white/5 text-text-secondary hover:text-accent-blue hover:bg-accent-blue/10 border border-transparent"
-              title={`Download ${fname}`}
-            >
-              <Download className="w-3.5 h-3.5" />
-              Download
-            </button>
+            {hasFile && (
+              <button
+                onClick={() => downloadContent(codeText, fname)}
+                className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer bg-white/5 text-text-secondary hover:text-accent-blue hover:bg-accent-blue/10 border border-transparent"
+                title={`Download ${fname}`}
+              >
+                <Download className="w-3.5 h-3.5" />
+                Download
+              </button>
+            )}
           </div>
           {/* macOS dots + code */}
           <div className="bg-terminal-bg">

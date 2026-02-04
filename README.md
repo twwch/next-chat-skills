@@ -12,6 +12,17 @@
 - **数据库**: Drizzle ORM，支持 SQLite 和 PostgreSQL 两种存储后端
 - **Skills**: 从本地 `~/.claude/skills` 目录读取，解析 SKILL.md (YAML frontmatter)
 
+
+## 项目运行Demo
+
+![Demo](./images/20260204-115652.png)
+
+![Demo](./images/20260204-145302.gif)
+
+![Demo](./images/20260204-160514.gif)
+
+
+
 ## 快速开始
 
 ### 1. 安装依赖

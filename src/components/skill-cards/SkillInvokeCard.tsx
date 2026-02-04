@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { SkillInvocation, TerminalData, DepsData, FilesData } from "@/types";
+import type { SkillInvocation, TerminalData, DepsData, FilesData, ReferenceData, SubagentData } from "@/types";
 import { TerminalPanel } from "./TerminalPanel";
 import { DepsPanel } from "./DepsPanel";
 import { FilesPanel } from "./FilesPanel";
@@ -14,6 +14,7 @@ import {
   AlertCircle,
   Clock,
   FileText,
+  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -32,6 +33,16 @@ const TYPE_CONFIG = {
     icon: <FolderOpen className="w-4 h-4" />,
     color: "bg-accent-purple-dim text-accent-purple",
     label: "Application Files",
+  },
+  reference: {
+    icon: <FileText className="w-4 h-4" />,
+    color: "bg-accent-cyan-dim text-accent-cyan",
+    label: "Loading Reference",
+  },
+  subagent: {
+    icon: <Search className="w-4 h-4" />,
+    color: "bg-accent-purple-dim text-accent-purple",
+    label: "Visual Inspection",
   },
 };
 
@@ -199,6 +210,49 @@ function getTabs(invocation: SkillInvocation) {
             ]
           : [],
       ];
+    case "reference": {
+      const refData = invocation.data as ReferenceData;
+      return [
+        {
+          label: refData.filename || "Reference",
+          icon: <FileText className="w-3.5 h-3.5" />,
+          content: (
+            <div className="px-4 py-3 text-xs text-text-secondary">
+              {refData.content ? (
+                <pre className="whitespace-pre-wrap font-mono max-h-[300px] overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full">
+                  {refData.content}
+                </pre>
+              ) : (
+                <span className="text-text-muted">Loading...</span>
+              )}
+            </div>
+          ),
+        },
+      ];
+    }
+    case "subagent": {
+      const saData = invocation.data as SubagentData;
+      return [
+        {
+          label: "Inspection",
+          icon: <Search className="w-3.5 h-3.5" />,
+          content: (
+            <div className="px-4 py-3 text-xs text-text-secondary">
+              {saData.result ? (
+                <pre className="whitespace-pre-wrap font-mono max-h-[300px] overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full">
+                  {saData.result}
+                </pre>
+              ) : (
+                <div className="flex items-center gap-2 text-text-muted">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Inspecting {saData.images.length} image(s)...</span>
+                </div>
+              )}
+            </div>
+          ),
+        },
+      ];
+    }
     default:
       return [];
   }

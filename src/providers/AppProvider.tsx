@@ -71,6 +71,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (convRes.ok) {
           const convs: Conversation[] = await convRes.json();
           setConversations(convs);
+
+          // Restore conversation from URL ?id= param
+          const urlId = new URLSearchParams(window.location.search).get("id");
+          if (urlId && convs.some((c) => c.id === urlId)) {
+            setCurrentConversationId(urlId);
+          }
         }
         if (settingsRes.ok) {
           const s: Settings = await settingsRes.json();
@@ -84,6 +90,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     hydrate();
   }, []);
+
+  // Sync currentConversationId to URL (only after hydration to avoid clearing the param before it's read)
+  useEffect(() => {
+    if (!hydrated) return;
+    const url = new URL(window.location.href);
+    if (currentConversationId) {
+      url.searchParams.set("id", currentConversationId);
+    } else {
+      url.searchParams.delete("id");
+    }
+    window.history.replaceState({}, "", url.toString());
+  }, [currentConversationId, hydrated]);
 
   const currentConversation =
     conversations.find((c) => c.id === currentConversationId) ?? null;

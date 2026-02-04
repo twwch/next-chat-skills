@@ -4,6 +4,16 @@ English | [中文](./README.md)
 
 An AI assistant application built with Next.js, featuring conversation management and external Skill (scripts/tools/rules) integration. The AI autonomously decides when to invoke Skills, executing scripts in a sandboxed environment, installing dependencies, and generating files.
 
+## Demo
+
+![Demo](./images/20260204-115652.png)
+
+![Demo](./images/20260204-145302.gif)
+
+![Demo](./images/20260204-160514.gif)
+
+
+
 ## Tech Stack
 
 - **Framework**: Next.js 16 (App Router) + React 19 + TypeScript 5

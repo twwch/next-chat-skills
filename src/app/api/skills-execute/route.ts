@@ -5,11 +5,13 @@ import os from "os";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { skillName, scriptPath, command, args = [] } = body as {
+  const { skillName, scriptPath, command, args = [], stdin, timeout } = body as {
     skillName: string;
     scriptPath?: string;
     command?: string;
     args?: string[];
+    stdin?: string;
+    timeout?: number;
   };
 
   if (!skillName || (!scriptPath && !command)) {
@@ -69,7 +71,7 @@ export async function POST(req: NextRequest) {
       if (command) {
         executeShellCommand(command, os.homedir(), onEvent, onDone);
       } else {
-        executeSkillScript(skill!.path, scriptPath!, args, onEvent, onDone);
+        executeSkillScript(skill!.path, scriptPath!, args, onEvent, onDone, { stdin, timeout });
       }
     },
   });

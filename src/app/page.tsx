@@ -11,34 +11,83 @@ import { ChatArea } from "@/components/chat/ChatArea";
 import { InputArea } from "@/components/chat/InputArea";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { useSkills } from "@/hooks/useSkills";
-import type { Conversation, Message, SkillInvocation, TerminalData } from "@/types";
+import type { Conversation, Message, SkillInvocation, TerminalData, ReferenceData, SubagentData } from "@/types";
 
 interface FileBlock {
   filePath: string;
   content: string;
 }
 
+// Inline external CSS <link> and JS <script src> references using sibling file content.
+// This makes the HTML preview self-contained in the srcDoc iframe.
+function inlineExternalResources(html: string, siblingFiles: Map<string, string>): string {
+  // Inline <link rel="stylesheet" href="...">
+  html = html.replace(/<link\b[^>]*>/gi, (tag) => {
+    if (!/rel=["']stylesheet["']/i.test(tag)) return tag;
+    const hrefMatch = /href=["']([^"']+)["']/i.exec(tag);
+    if (!hrefMatch) return tag;
+    const filename = hrefMatch[1].replace(/^\.\//, "").split("/").pop() || "";
+    const css = siblingFiles.get(filename);
+    if (css) return `<style>\n${css}</style>`;
+    return tag;
+  });
+
+  // Inline <script src="..."></script>
+  html = html.replace(/<script\b([^>]*)><\/script>/gi, (tag, attrs: string) => {
+    const srcMatch = /src=["']([^"']+)["']/i.exec(attrs);
+    if (!srcMatch) return tag;
+    const filename = srcMatch[1].replace(/^\.\//, "").split("/").pop() || "";
+    const js = siblingFiles.get(filename);
+    if (js) return `<script>\n${js}</script>`;
+    return tag;
+  });
+
+  return html;
+}
+
+const FILE_BLOCK_RE = /````file:([^\n]+)\n([\s\S]*?)````/g;
+const FILE_LANG_MAP: Record<string, string> = {
+  html: "html", htm: "html", css: "css", js: "javascript",
+  ts: "typescript", jsx: "jsx", tsx: "tsx", py: "python",
+  json: "json", md: "markdown", sh: "bash", yaml: "yaml", yml: "yaml",
+};
+
 function parseFileBlocks(content: string): {
   cleanContent: string;
   files: FileBlock[];
 } {
   const files: FileBlock[] = [];
+
+  // First pass: collect all sibling files so HTML previews can inline CSS/JS
+  const siblingFiles = new Map<string, string>();
+  let m: RegExpExecArray | null;
+  const collectRe = new RegExp(FILE_BLOCK_RE.source, FILE_BLOCK_RE.flags);
+  while ((m = collectRe.exec(content)) !== null) {
+    const p = m[1].trim();
+    if (p.startsWith("/tmp/chat-skills-output/")) {
+      const name = p.split("/").pop() || "";
+      siblingFiles.set(name, m[2]);
+    }
+  }
+
+  // Second pass: replace file blocks with code blocks
   const cleanContent = content.replace(
-    /````file:([^\n]+)\n([\s\S]*?)````/g,
+    FILE_BLOCK_RE,
     (_match, filePath: string, fileContent: string) => {
       const trimmedPath = filePath.trim();
       if (trimmedPath.startsWith("/tmp/chat-skills-output/")) {
         files.push({ filePath: trimmedPath, content: fileContent });
-        // Derive language from file extension for syntax highlighting
         const ext = trimmedPath.split(".").pop() || "";
-        const langMap: Record<string, string> = {
-          html: "html", htm: "html", css: "css", js: "javascript",
-          ts: "typescript", jsx: "jsx", tsx: "tsx", py: "python",
-          json: "json", md: "markdown", sh: "bash", yaml: "yaml", yml: "yaml",
-        };
-        const lang = langMap[ext] || ext;
+        const lang = FILE_LANG_MAP[ext] || ext;
         const filename = trimmedPath.split("/").pop() || "";
-        return `> **File saved:** \`${trimmedPath}\`\n\n\`\`\`${lang}:${filename}\n${fileContent}\`\`\``;
+
+        // For HTML files, inline referenced CSS/JS from sibling files for preview
+        let displayContent = fileContent;
+        if (lang === "html") {
+          displayContent = inlineExternalResources(fileContent, siblingFiles);
+        }
+
+        return `> **File saved:** \`${trimmedPath}\`\n\n\`\`\`${lang}:${filename}\n${displayContent}\`\`\``;
       }
       return _match;
     }
@@ -78,19 +127,50 @@ async function writeFilesToDisk(files: FileBlock[]): Promise<void> {
   }
 }
 
-function parseSkillBlocks(content: string): {
+function parseSkillBlocks(content: string, installedSkillNames?: string[]): {
   cleanContent: string;
   invocations: SkillInvocation[];
 } {
   const invocations: SkillInvocation[] = [];
   const cleanContent = content.replace(
-    /```skill\n([\s\S]*?)```/g,
+    /`{3,}skill\s*\n([\s\S]*?)`{3,}/g,
     (_match, block: string) => {
       try {
         const parsed = JSON.parse(block.trim());
         const skillName = parsed.skill || "unknown";
 
-        if (parsed.action === "command" && parsed.command) {
+        // Block invocations for skills that don't exist (except "system" which is built-in)
+        if (installedSkillNames && skillName !== "system" && !installedSkillNames.includes(skillName)) {
+          return `> ⚠️ Skill **${skillName}** is not installed.`;
+        }
+
+        if (parsed.action === "subagent" && parsed.prompt && parsed.images) {
+          // Subagent invocation (visual inspection via separate AI call)
+          invocations.push({
+            id: crypto.randomUUID(),
+            skillName,
+            type: "subagent",
+            status: "running",
+            subagentPrompt: parsed.prompt,
+            subagentImages: parsed.images,
+            data: {
+              prompt: parsed.prompt,
+              images: parsed.images,
+            } as SubagentData,
+          });
+        } else if (parsed.action === "load-reference" && parsed.reference) {
+          // Reference loading (on-demand)
+          invocations.push({
+            id: crypto.randomUUID(),
+            skillName,
+            type: "reference",
+            status: "running",
+            reference: parsed.reference,
+            data: {
+              filename: parsed.reference,
+            } as ReferenceData,
+          });
+        } else if (parsed.action === "command" && parsed.command) {
           // Command-based invocation (e.g. find-skills using npx)
           invocations.push({
             id: crypto.randomUUID(),
@@ -114,11 +194,19 @@ function parseSkillBlocks(content: string): {
             status: "running",
             scriptPath: script,
             args,
+            stdin: parsed.stdin,
+            timeout: parsed.timeout,
             data: {
               command: `${script} ${args.map((a: string) => (a.includes(" ") ? `"${a}"` : a)).join(" ")}`,
               lines: [],
             } as TerminalData,
           });
+        }
+        if (parsed.action === "subagent") {
+          return `> 🔍 Subagent inspecting ${parsed.images?.length || 0} image(s) for skill **${skillName}**...`;
+        }
+        if (parsed.action === "load-reference") {
+          return `> Loading reference **${parsed.reference}** from skill **${skillName}**...`;
         }
         return `> Invoking skill **${skillName}**...`;
       } catch {
@@ -211,15 +299,52 @@ export default function Home() {
     addActivity,
   } = useApp();
 
-  const { refreshSkills } = useSkills();
+  const { skills: installedSkills, refreshSkills } = useSkills();
+  const installedSkillNames = useMemo(() => installedSkills.map((s) => s.name), [installedSkills]);
   const [showSettings, setShowSettings] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState(settings.model || "gpt-4o");
   const conversationRef = useRef(currentConversation);
   conversationRef.current = currentConversation;
+  const installedSkillNamesRef = useRef(installedSkillNames);
+  installedSkillNamesRef.current = installedSkillNames;
+
+  // Sync selectedModel when settings.model changes (e.g. after hydration)
+  const prevSettingsModel = useRef(settings.model);
+  useEffect(() => {
+    if (settings.model && settings.model !== prevSettingsModel.current) {
+      prevSettingsModel.current = settings.model;
+      setSelectedModel(settings.model);
+    }
+  }, [settings.model]);
+
+  // Fetch available models from the configured API
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchModels() {
+      try {
+        const res = await fetch("/api/models");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && data.models?.length > 0) {
+          setAvailableModels(data.models);
+        }
+      } catch {
+        // Fall back to configured model only
+      }
+    }
+    fetchModels();
+    return () => { cancelled = true; };
+  }, [settings.openaiApiKey, settings.openaiBaseUrl]);
 
   // Track which conversation the current send belongs to,
   // so onFinish saves to the correct conversation even if the user switches.
   const sentConvIdRef = useRef<string | null>(null);
+
+  // When the user clicks stop, prevent onFinish and skill callbacks from
+  // saving duplicate messages or triggering further AI rounds.
+  const stoppedRef = useRef(false);
 
   // Use a ref so the transport body function always reads the latest settings.
   // useChat stores the Chat instance in a useRef and only recreates it when
@@ -227,12 +352,19 @@ export default function Home() {
   // ensures the latest settings are resolved on each sendMessage call.
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const selectedModelRef = useRef(selectedModel);
+  selectedModelRef.current = selectedModel;
 
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
-        body: () => ({ settings: settingsRef.current }),
+        body: () => ({
+          settings: {
+            ...settingsRef.current,
+            model: selectedModelRef.current,
+          },
+        }),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
@@ -243,16 +375,21 @@ export default function Home() {
     status,
     sendMessage,
     setMessages,
+    stop,
   } = useChat({
     transport,
     id: "main-chat",
     onFinish: ({ message: finishedMsg }) => {
+      if (stoppedRef.current) return;
       const convId = sentConvIdRef.current;
       if (!convId) return;
 
       const text = getTextContent(finishedMsg as unknown as Record<string, unknown>);
-      const { cleanContent: afterSkills, invocations } = parseSkillBlocks(text);
+      const { cleanContent: afterSkills, invocations } = parseSkillBlocks(text, installedSkillNamesRef.current);
       const { cleanContent, files } = parseFileBlocks(afterSkills);
+
+      // Skip empty messages (e.g. onFinish fires after onError with no content)
+      if (!cleanContent.trim() && invocations.length === 0 && files.length === 0) return;
 
       const newMsg: Message = {
         id: finishedMsg.id,
@@ -263,11 +400,11 @@ export default function Home() {
           invocations.length > 0 ? invocations : undefined,
       };
 
-      // Use functional updater to safely append without overwriting concurrent changes
-      updateConversationById(convId, (conv) => ({
-        ...conv,
-        messages: [...conv.messages, newMsg],
-      }));
+      // Use functional updater to safely append; skip if message already saved (e.g. by handleStop)
+      updateConversationById(convId, (conv) => {
+        if (conv.messages.some((m) => m.id === newMsg.id)) return conv;
+        return { ...conv, messages: [...conv.messages, newMsg] };
+      });
 
       // Write file blocks to disk
       if (files.length > 0) {
@@ -316,7 +453,25 @@ export default function Home() {
       } catch {
         // not JSON, use as-is
       }
-      setChatError(errorMsg);
+      const convId = sentConvIdRef.current;
+
+      // Persist error as a normal assistant message so it survives refresh
+      if (convId) {
+        const errorMessage: Message = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: errorMsg,
+          timestamp: Date.now(),
+        };
+        updateConversationById(convId, (conv) => ({
+          ...conv,
+          messages: [...conv.messages, errorMessage],
+        }));
+      } else {
+        // No conversation to persist to — show ephemeral banner as fallback
+        setChatError(errorMsg);
+      }
+
       addActivity({
         id: crypto.randomUUID(),
         type: "chat",
@@ -327,11 +482,16 @@ export default function Home() {
           minute: "2-digit",
           hour12: false,
         }),
-      }, sentConvIdRef.current || undefined);
+      }, convId || undefined);
     },
   });
 
-  const isLoading = status === "streaming" || status === "submitted";
+  const isStreaming = status === "streaming" || status === "submitted";
+  // Consider the conversation "busy" if the AI is streaming OR any skill invocations are still running
+  const hasRunningInvocations = currentConversation?.messages.some(
+    (m) => m.skillInvocations?.some((si) => si.status === "running")
+  ) ?? false;
+  const isLoading = isStreaming || hasRunningInvocations;
 
   // Sync stored conversation messages into useChat when switching conversations
   // so the AI has full history context when the user sends a new message.
@@ -370,8 +530,235 @@ export default function Home() {
   const sendMessageRef = useRef(sendMessage);
   sendMessageRef.current = sendMessage;
 
+  // Safe wrapper: skip if stopped, catch Chat instance errors (e.g. after stop/unmount)
+  const safeSendMessage = useCallback((msg: { text: string }) => {
+    if (stoppedRef.current) return;
+    try {
+      sendMessageRef.current(msg);
+    } catch {
+      // Chat instance may be in a bad state after stop — ignore
+    }
+  }, []);
+
+  const executeReferenceLoad = useCallback(
+    async (inv: SkillInvocation, convId: string) => {
+      try {
+        const res = await fetch("/api/skills-reference", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            skillName: inv.skillName,
+            reference: inv.reference,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: "Failed to load reference" }));
+          updateConversationById(convId, (conv) => updateInvStatus(conv, inv.id, "error"));
+
+          const resultContent = `[Reference load error - ${inv.skillName}/${inv.reference}]\nError: ${err.error}\nPlease check the reference filename and try again.`;
+          updateConversationById(convId, (conv) => ({
+            ...conv,
+            messages: [
+              ...conv.messages,
+              {
+                id: crypto.randomUUID(),
+                role: "user" as const,
+                content: resultContent,
+                timestamp: Date.now(),
+                isAutomatic: true,
+              },
+            ],
+          }));
+          safeSendMessage({ text: resultContent });
+          return;
+        }
+
+        const data = await res.json();
+
+        // Update invocation with loaded content and mark success
+        updateConversationById(convId, (conv) => ({
+          ...conv,
+          messages: conv.messages.map((msg): Message => {
+            if (!msg.skillInvocations) return msg;
+            return {
+              ...msg,
+              skillInvocations: msg.skillInvocations.map((si): SkillInvocation => {
+                if (si.id !== inv.id) return si;
+                return {
+                  ...si,
+                  status: "success",
+                  data: { filename: inv.reference!, content: data.content } as ReferenceData,
+                };
+              }),
+            };
+          }),
+        }));
+
+        addActivity({
+          id: crypto.randomUUID(),
+          type: "skill",
+          color: "green",
+          text: `Loaded reference <strong>${inv.reference}</strong> from <strong>${inv.skillName}</strong>`,
+          time: new Date().toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          }),
+          status: "done",
+        }, convId);
+
+        // Send reference content back to AI
+        const resultContent = `[Reference loaded - ${inv.skillName}/${inv.reference}]\n\`\`\`\n${data.content}\n\`\`\`\nPlease use this reference content to continue the task.`;
+        updateConversationById(convId, (conv) => ({
+          ...conv,
+          messages: [
+            ...conv.messages,
+            {
+              id: crypto.randomUUID(),
+              role: "user" as const,
+              content: resultContent,
+              timestamp: Date.now(),
+              isAutomatic: true,
+            },
+          ],
+        }));
+        safeSendMessage({ text: resultContent });
+      } catch {
+        updateConversationById(convId, (conv) => updateInvStatus(conv, inv.id, "error"));
+      }
+    },
+    [addActivity, updateConversationById]
+  );
+
+  const executeSubagent = useCallback(
+    async (inv: SkillInvocation, convId: string) => {
+      try {
+        const res = await fetch("/api/skills-subagent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: inv.subagentPrompt,
+            images: inv.subagentImages,
+            settings: settingsRef.current,
+          }),
+          signal: AbortSignal.timeout(120000),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: "Subagent call failed" }));
+          updateConversationById(convId, (conv) => updateInvStatus(conv, inv.id, "error"));
+
+          const resultContent = `[Subagent error - ${inv.skillName}]\nError: ${err.error}\nPlease retry or inspect the images manually.`;
+          updateConversationById(convId, (conv) => ({
+            ...conv,
+            messages: [
+              ...conv.messages,
+              {
+                id: crypto.randomUUID(),
+                role: "user" as const,
+                content: resultContent,
+                timestamp: Date.now(),
+                isAutomatic: true,
+              },
+            ],
+          }));
+          safeSendMessage({ text: resultContent });
+          return;
+        }
+
+        const data = await res.json();
+
+        // Update invocation with result and mark success
+        updateConversationById(convId, (conv) => ({
+          ...conv,
+          messages: conv.messages.map((msg): Message => {
+            if (!msg.skillInvocations) return msg;
+            return {
+              ...msg,
+              skillInvocations: msg.skillInvocations.map((si): SkillInvocation => {
+                if (si.id !== inv.id) return si;
+                return {
+                  ...si,
+                  status: "success",
+                  data: {
+                    ...(si.data as SubagentData),
+                    result: data.result,
+                  } as SubagentData,
+                };
+              }),
+            };
+          }),
+        }));
+
+        addActivity({
+          id: crypto.randomUUID(),
+          type: "skill",
+          color: "green",
+          text: `Subagent completed for <strong>${inv.skillName}</strong>`,
+          time: new Date().toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          }),
+          status: "done",
+        }, convId);
+
+        // Feed subagent findings back to the AI
+        const resultContent = `[Subagent visual inspection result - ${inv.skillName}]\n\`\`\`\n${data.result}\n\`\`\`\nPlease analyze the findings above. If issues were found, fix them and re-verify. If no issues, continue with the task.`;
+        updateConversationById(convId, (conv) => ({
+          ...conv,
+          messages: [
+            ...conv.messages,
+            {
+              id: crypto.randomUUID(),
+              role: "user" as const,
+              content: resultContent,
+              timestamp: Date.now(),
+              isAutomatic: true,
+            },
+          ],
+        }));
+        safeSendMessage({ text: resultContent });
+      } catch (err) {
+        updateConversationById(convId, (conv) => updateInvStatus(conv, inv.id, "error"));
+
+        // Notify the AI so the conversation doesn't stall
+        const errorMsg = err instanceof Error ? err.message : "Subagent call failed";
+        const resultContent = `[Subagent error - ${inv.skillName}]\nError: ${errorMsg}\nPlease retry or inspect the images manually.`;
+        updateConversationById(convId, (conv) => ({
+          ...conv,
+          messages: [
+            ...conv.messages,
+            {
+              id: crypto.randomUUID(),
+              role: "user" as const,
+              content: resultContent,
+              timestamp: Date.now(),
+              isAutomatic: true,
+            },
+          ],
+        }));
+        safeSendMessage({ text: resultContent });
+      }
+    },
+    [addActivity, updateConversationById]
+  );
+
   const executeSkillFromInvocation = useCallback(
     async (inv: SkillInvocation, convId: string) => {
+      // Handle reference loading separately (simple fetch, no SSE)
+      if (inv.type === "reference") {
+        executeReferenceLoad(inv, convId);
+        return;
+      }
+
+      // Handle subagent invocations (separate AI call with images)
+      if (inv.type === "subagent") {
+        executeSubagent(inv, convId);
+        return;
+      }
+
       const outputLines: string[] = [];
 
       try {
@@ -385,6 +772,8 @@ export default function Home() {
                   skillName: inv.skillName,
                   scriptPath: inv.scriptPath || (inv.data as TerminalData).command.split(" ")[0],
                   args: inv.args || [],
+                  stdin: inv.stdin,
+                  timeout: inv.timeout,
                 }
           ),
         });
@@ -471,7 +860,7 @@ export default function Home() {
                   }));
 
                   // Trigger AI continuation (or retry on error)
-                  sendMessageRef.current({ text: resultContent });
+                  safeSendMessage({ text: resultContent });
                 }
               }
             } catch {
@@ -483,11 +872,12 @@ export default function Home() {
         updateConversationById(convId, (conv) => updateInvStatus(conv, inv.id, "error"));
       }
     },
-    [addActivity, updateConversationById, refreshSkills]
+    [addActivity, updateConversationById, refreshSkills, executeReferenceLoad, executeSubagent]
   );
 
   const handleSend = useCallback(
     (content: string) => {
+      stoppedRef.current = false;
       setChatError(null);
       let conv = conversationRef.current;
       let convId = currentConversationId;
@@ -527,6 +917,55 @@ export default function Home() {
     [createConversation, updateConversationById, sendMessage, currentConversationId]
   );
 
+  const handleStop = useCallback(() => {
+    stoppedRef.current = true;
+    // Save whatever has been streamed so far before stopping
+    const lastChat = chatMessages[chatMessages.length - 1];
+    if (lastChat?.role === "assistant") {
+      const convId = sentConvIdRef.current;
+      if (convId) {
+        const text = getTextContent(lastChat as unknown as Record<string, unknown>);
+        const { cleanContent: afterSkills } = parseSkillBlocks(text, installedSkillNames);
+        const { cleanContent, files } = parseFileBlocks(afterSkills);
+
+        const partialMsg: Message = {
+          id: lastChat.id,
+          role: "assistant",
+          content: cleanContent,
+          timestamp: Date.now(),
+        };
+        updateConversationById(convId, (conv) => {
+          if (conv.messages.some((m) => m.id === partialMsg.id)) return conv;
+          return { ...conv, messages: [...conv.messages, partialMsg] };
+        });
+
+        if (files.length > 0) {
+          writeFilesToDisk(files);
+        }
+      }
+    }
+
+    // Clear any stuck running invocations (e.g. from restored history)
+    // so hasRunningInvocations becomes false and isLoading clears.
+    const targetId = currentConversationId;
+    if (targetId) {
+      updateConversationById(targetId, (conv) => ({
+        ...conv,
+        messages: conv.messages.map((m) => {
+          if (!m.skillInvocations?.some((si) => si.status === "running")) return m;
+          return {
+            ...m,
+            skillInvocations: m.skillInvocations!.map((si) =>
+              si.status === "running" ? { ...si, status: "error" as const } : si
+            ),
+          };
+        }),
+      }));
+    }
+
+    stop();
+  }, [chatMessages, stop, updateConversationById, currentConversationId, installedSkillNames]);
+
   // Merge stored messages with streaming chat messages (filter out automatic messages)
   const displayMessages: Message[] =
     currentConversation?.messages.filter((m) => !m.isAutomatic) || [];
@@ -555,7 +994,14 @@ export default function Home() {
       <main className="flex-1 flex flex-col min-w-0">
         <TopBar onOpenSettings={() => setShowSettings(true)} />
         <ChatArea messages={displayMessages} isLoading={isLoading} error={chatError} onDismissError={() => setChatError(null)} />
-        <InputArea onSend={handleSend} isLoading={isLoading} />
+        <InputArea
+          onSend={handleSend}
+          isLoading={isLoading}
+          onStop={handleStop}
+          models={availableModels}
+          selectedModel={selectedModel}
+          onModelChange={setSelectedModel}
+        />
       </main>
 
       <RightPanel />
