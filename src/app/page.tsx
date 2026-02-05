@@ -11,7 +11,7 @@ import { ChatArea } from "@/components/chat/ChatArea";
 import { InputArea } from "@/components/chat/InputArea";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { useSkills } from "@/hooks/useSkills";
-import type { Attachment, Conversation, Message, SkillInvocation, TerminalData, ReferenceData, SubagentData } from "@/types";
+import type { Attachment, Conversation, FileBlockData, Message, SkillInvocation, TerminalData, ReferenceData, SubagentData } from "@/types";
 
 interface FileBlock {
   filePath: string;
@@ -45,35 +45,55 @@ function inlineExternalResources(html: string, siblingFiles: Map<string, string>
   return html;
 }
 
-const FILE_BLOCK_RE = /````file:([^\n]+)\n([\s\S]*?)````/g;
+// Backreference ensures opening and closing use the same number of backticks (4+).
+// The LLM now uses 6 backticks; old messages used 4. Both are matched.
+const FILE_BLOCK_RE = /(`{4,})file:([^\n]+)\n([\s\S]*?)\1/g;
 const FILE_LANG_MAP: Record<string, string> = {
   html: "html", htm: "html", css: "css", js: "javascript",
   ts: "typescript", jsx: "jsx", tsx: "tsx", py: "python",
   json: "json", md: "markdown", sh: "bash", yaml: "yaml", yml: "yaml",
 };
 
+// Count the longest consecutive backtick run in a string
+function maxConsecutiveBackticks(str: string): number {
+  let max = 0;
+  let cur = 0;
+  for (const ch of str) {
+    if (ch === "`") { cur++; if (cur > max) max = cur; }
+    else cur = 0;
+  }
+  return max;
+}
+
+// Unique marker for file blocks — will be split on in MessageBubble
+const FILE_BLOCK_MARKER = "\u00A7FILE_BLOCK\u00A7";
+
 function parseFileBlocks(content: string): {
   cleanContent: string;
   files: FileBlock[];
+  fileBlocks: FileBlockData[];
 } {
   const files: FileBlock[] = [];
+  const fileBlocks: FileBlockData[] = [];
 
   // First pass: collect all sibling files so HTML previews can inline CSS/JS
   const siblingFiles = new Map<string, string>();
   let m: RegExpExecArray | null;
   const collectRe = new RegExp(FILE_BLOCK_RE.source, FILE_BLOCK_RE.flags);
   while ((m = collectRe.exec(content)) !== null) {
-    const p = m[1].trim();
+    // m[1]=backticks, m[2]=filePath, m[3]=fileContent
+    const p = m[2].trim();
     if (p.startsWith("/tmp/chat-skills-output/")) {
       const name = p.split("/").pop() || "";
-      siblingFiles.set(name, m[2]);
+      siblingFiles.set(name, m[3]);
     }
   }
 
-  // Second pass: replace file blocks with code blocks
+  // Second pass: replace file blocks with markers (not markdown code fences)
+  let blockIndex = 0;
   const cleanContent = content.replace(
     FILE_BLOCK_RE,
-    (_match, filePath: string, fileContent: string) => {
+    (_match, _backticks: string, filePath: string, fileContent: string) => {
       const trimmedPath = filePath.trim();
       if (trimmedPath.startsWith("/tmp/chat-skills-output/")) {
         files.push({ filePath: trimmedPath, content: fileContent });
@@ -87,12 +107,15 @@ function parseFileBlocks(content: string): {
           displayContent = inlineExternalResources(fileContent, siblingFiles);
         }
 
-        return `> **File saved:** \`${trimmedPath}\`\n\n\`\`\`${lang}:${filename}\n${displayContent}\`\`\``;
+        fileBlocks.push({ filePath: trimmedPath, content: displayContent, lang, filename });
+        const marker = `${FILE_BLOCK_MARKER}${blockIndex}${FILE_BLOCK_MARKER}`;
+        blockIndex++;
+        return marker;
       }
       return _match;
     }
   );
-  return { cleanContent, files };
+  return { cleanContent, files, fileBlocks };
 }
 
 // Close any unclosed code fences so ReactMarkdown renders them properly during streaming
@@ -392,7 +415,7 @@ export default function Home() {
 
       const text = getTextContent(finishedMsg as unknown as Record<string, unknown>);
       const { cleanContent: afterSkills, invocations } = parseSkillBlocks(text, installedSkillNamesRef.current);
-      const { cleanContent, files } = parseFileBlocks(afterSkills);
+      const { cleanContent, files, fileBlocks } = parseFileBlocks(afterSkills);
 
       // Skip empty messages (e.g. onFinish fires after onError with no content)
       if (!cleanContent.trim() && invocations.length === 0 && files.length === 0) return;
@@ -404,6 +427,7 @@ export default function Home() {
         timestamp: Date.now(),
         skillInvocations:
           invocations.length > 0 ? invocations : undefined,
+        fileBlocks: fileBlocks.length > 0 ? fileBlocks : undefined,
       };
 
       // Use functional updater to safely append; skip if message already saved (e.g. by handleStop)
@@ -950,13 +974,14 @@ export default function Home() {
       if (convId) {
         const text = getTextContent(lastChat as unknown as Record<string, unknown>);
         const { cleanContent: afterSkills } = parseSkillBlocks(text, installedSkillNames);
-        const { cleanContent, files } = parseFileBlocks(afterSkills);
+        const { cleanContent, files, fileBlocks } = parseFileBlocks(afterSkills);
 
         const partialMsg: Message = {
           id: lastChat.id,
           role: "assistant",
           content: cleanContent,
           timestamp: Date.now(),
+          fileBlocks: fileBlocks.length > 0 ? fileBlocks : undefined,
         };
         updateConversationById(convId, (conv) => {
           if (conv.messages.some((m) => m.id === partialMsg.id)) return conv;
@@ -1001,13 +1026,15 @@ export default function Home() {
     !displayMessages.find((m) => m.id === lastChat.id)
   ) {
     const rawText = getTextContent(lastChat as unknown as Record<string, unknown>);
-    // Close any unclosed code fences so they render properly during streaming
-    const text = closeOpenCodeFences(rawText);
+    // Convert completed file blocks to markers, then close any unclosed fences in remaining text
+    const { cleanContent: afterFiles, fileBlocks: streamFileBlocks } = parseFileBlocks(rawText);
+    const text = closeOpenCodeFences(afterFiles);
     displayMessages.push({
       id: lastChat.id,
       role: "assistant",
       content: text,
       timestamp: Date.now(),
+      fileBlocks: streamFileBlocks.length > 0 ? streamFileBlocks : undefined,
     });
   }
 

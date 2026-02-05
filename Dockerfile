@@ -44,6 +44,7 @@ RUN mkdir -p /home/nextjs/.claude/skills && chown -R nextjs:nodejs /home/nextjs/
 ENV HOME=/home/nextjs
 RUN npx skills add https://github.com/vercel-labs/skills --skill find-skills --yes --global
 RUN npx skills add nextlevelbuilder/ui-ux-pro-max-skill --yes --global
+RUN npx skills add anthropics/skills --skill skill-creator --yes --global
 
 # Copy standalone build output
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./

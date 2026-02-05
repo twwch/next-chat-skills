@@ -257,11 +257,11 @@ When you invoke a script, command, or load-reference action:
 
 **CRITICAL: ALL generated files MUST be saved under \`/tmp/chat-skills-output/\`. NEVER save files to the user's home directory, desktop, or any other location. This is a strict security rule — no exceptions.**
 
-When the task requires creating files (e.g. HTML prototypes, code, PPTX, PDF), use FOUR backticks (\`\`\`\`) as the delimiter so inner code blocks (triple backticks) don't break parsing:
+When the task requires creating files (e.g. HTML prototypes, code, PPTX, PDF), use SIX backticks (\`\`\`\`\`\`) as the delimiter so inner code blocks (triple or quadruple backticks) don't break parsing:
 
-\`\`\`\`file:/tmp/chat-skills-output/<project-name>/filename.ext
-<file content here — can safely contain \`\`\` code blocks>
-\`\`\`\`
+\`\`\`\`\`\`file:/tmp/chat-skills-output/<project-name>/filename.ext
+<file content here — can safely contain \`\`\` and \`\`\`\` code blocks>
+\`\`\`\`\`\`
 
 When scripts generate files, you MUST pass output paths under \`/tmp/chat-skills-output/<project-name>/\` as arguments. For example:
 - \`"args": ["/tmp/chat-skills-output/my-ppt/output.pptx"]\`
@@ -279,7 +279,7 @@ When scripts generate files, you MUST pass output paths under \`/tmp/chat-skills
 - Modifying the todolist: reuse \`/tmp/chat-skills-output/todolist/index.html\` (same path)
 
 IMPORTANT:
-- MUST use FOUR backticks (\`\`\`\`) to wrap file blocks, NOT three
+- MUST use SIX backticks (\`\`\`\`\`\`) to wrap file blocks — this prevents inner code examples from breaking the file boundary
 - The path MUST start with /tmp/chat-skills-output/
 - After creating files, tell the user the full file path so they can open it
 

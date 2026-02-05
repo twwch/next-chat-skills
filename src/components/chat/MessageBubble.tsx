@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import type { Message } from "@/types";
+import { useState, useMemo } from "react";
+import type { FileBlockData, Message } from "@/types";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import { SkillInvokeCard } from "@/components/skill-cards/SkillInvokeCard";
 import { Code2, FileCode, FileText, FileJson, Braces, Eye, Download } from "lucide-react";
 
@@ -71,6 +72,10 @@ function extractTextContent(node: React.ReactNode): string {
   if (typeof node === "string") return node;
   if (typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map(extractTextContent).join("");
+  if (node && typeof node === "object" && "props" in node) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return extractTextContent((node as any).props.children);
+  }
   return "";
 }
 
@@ -187,7 +192,132 @@ function HtmlCodeBlock({
   );
 }
 
+// Marker used by parseFileBlocks in page.tsx
+const FILE_BLOCK_MARKER = "\u00A7FILE_BLOCK\u00A7";
+const FILE_BLOCK_SPLIT_RE = /\u00A7FILE_BLOCK\u00A7(\d+)\u00A7FILE_BLOCK\u00A7/;
+
+// For backward compatibility: extract ````file: blocks from old stored messages
+// Backreference ensures opening and closing use the same number of backticks (4+)
+const LEGACY_FILE_BLOCK_RE = /(`{4,})file:([^\n]+)\n([\s\S]*?)\1/g;
+const FILE_LANG_MAP: Record<string, string> = {
+  html: "html", htm: "html", css: "css", js: "javascript",
+  ts: "typescript", jsx: "jsx", tsx: "tsx", py: "python",
+  json: "json", md: "markdown", sh: "bash", yaml: "yaml", yml: "yaml",
+};
+
+function extractFileBlocksFromContent(content: string): {
+  processedContent: string;
+  fileBlocks: FileBlockData[];
+} {
+  const fileBlocks: FileBlockData[] = [];
+  let blockIndex = 0;
+  const processedContent = content.replace(
+    LEGACY_FILE_BLOCK_RE,
+    (_match, _backticks: string, filePath: string, fileContent: string) => {
+      const trimmedPath = filePath.trim();
+      const ext = trimmedPath.split(".").pop() || "";
+      const lang = FILE_LANG_MAP[ext] || ext;
+      const filename = trimmedPath.split("/").pop() || "";
+      fileBlocks.push({ filePath: trimmedPath, content: fileContent, lang, filename });
+      const marker = `${FILE_BLOCK_MARKER}${blockIndex}${FILE_BLOCK_MARKER}`;
+      blockIndex++;
+      return marker;
+    }
+  );
+  return { processedContent, fileBlocks };
+}
+
+function FileBlockCard({ block }: { block: FileBlockData }) {
+  const [showPreview, setShowPreview] = useState(false);
+  const langInfo =
+    LANG_DISPLAY[block.lang] || {
+      label: block.lang.toUpperCase(),
+      icon: <Code2 className="w-4 h-4" />,
+    };
+  const isHtml = block.lang === "html" || block.lang === "htm";
+
+  return (
+    <div className="not-prose my-3">
+      {/* File saved indicator */}
+      <div className="my-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-accent-green-dim text-accent-green text-xs font-medium">
+        <p className="m-0"><strong>File saved:</strong> <code className="text-accent-green bg-accent-green/10 text-[11px] px-1 py-0.5 rounded">{block.filePath}</code></p>
+      </div>
+      {/* Code card */}
+      <div className="border border-border-glass rounded-2xl bg-bg-card overflow-hidden">
+        <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-border-glass bg-bg-glass">
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-accent-blue-dim text-accent-blue">
+            {langInfo.icon}
+          </div>
+          <span className="font-heading text-[13px] font-semibold text-text-primary">
+            {langInfo.label}
+          </span>
+          <div className="ml-auto flex items-center gap-1.5">
+            <button
+              onClick={() => downloadContent(block.content, block.filename)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer bg-white/5 text-text-secondary hover:text-accent-blue hover:bg-accent-blue/10 border border-transparent"
+              title={`Download ${block.filename}`}
+            >
+              <Download className="w-3.5 h-3.5" />
+              Download
+            </button>
+            {isHtml && (
+              <button
+                onClick={() => setShowPreview(!showPreview)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                  showPreview
+                    ? "bg-accent-green/20 text-accent-green border border-accent-green/30"
+                    : "bg-white/5 text-text-secondary hover:text-accent-green hover:bg-accent-green/10 border border-transparent"
+                }`}
+              >
+                {showPreview ? <Code2 className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                {showPreview ? "Code" : "Preview"}
+              </button>
+            )}
+          </div>
+        </div>
+        {isHtml && showPreview ? (
+          <div className="bg-white overflow-hidden">
+            <iframe
+              srcDoc={block.content}
+              className="w-full h-[400px] border-0"
+              sandbox="allow-scripts"
+              title="HTML Preview"
+            />
+          </div>
+        ) : (
+          <div className="bg-terminal-bg">
+            <div className="flex items-center gap-2 px-3.5 py-2 bg-white/[0.03] border-b border-white/5">
+              <div className="w-2 h-2 rounded-full bg-[#FF5F57]" />
+              <div className="w-2 h-2 rounded-full bg-[#FEBC2E]" />
+              <div className="w-2 h-2 rounded-full bg-[#28C840]" />
+            </div>
+            <pre className="p-3.5 max-h-[400px] overflow-y-auto text-xs font-mono leading-relaxed m-0 bg-transparent [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-corner]:bg-transparent">
+              <code className="text-text-primary">{block.content}</code>
+            </pre>
+            <div className="px-3.5 py-1.5 bg-white/[0.03] border-t border-white/5" />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const markdownComponents: Components = {
+  blockquote: ({ children }) => {
+    const text = extractTextContent(children);
+    if (text.includes("File saved:")) {
+      return (
+        <div className="not-prose my-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-accent-green-dim text-accent-green text-xs font-medium [&_p]:m-0 [&_strong]:text-accent-green [&_code]:text-accent-green [&_code]:bg-accent-green/10 [&_code]:text-[11px]">
+          {children}
+        </div>
+      );
+    }
+    return (
+      <blockquote className="not-prose my-2 pl-3 border-l-2 border-border-glass text-text-muted text-sm italic [&_p]:my-1">
+        {children}
+      </blockquote>
+    );
+  },
   table: ({ children }) => (
     <div className="not-prose my-3 border border-border-glass rounded-xl overflow-hidden">
       <div className="overflow-x-auto">
@@ -207,6 +337,9 @@ const markdownComponents: Components = {
   ),
   td: ({ children }) => (
     <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{children}</td>
+  ),
+  p: ({ children }) => (
+    <p className="whitespace-pre-line">{children}</p>
   ),
   pre: ({ children }) => <>{children}</>,
   code: ({ className, children, ...props }) => {
@@ -263,7 +396,7 @@ const markdownComponents: Components = {
     // Inline code
     return (
       <code
-        className="not-prose text-accent-green bg-bg-glass px-1.5 py-0.5 rounded text-xs font-mono"
+        className="not-prose text-accent-blue bg-bg-glass px-1.5 py-0.5 rounded text-xs font-mono"
         {...props}
       >
         {children}
@@ -274,6 +407,26 @@ const markdownComponents: Components = {
 
 export function MessageBubble({ message }: { message: Message }) {
   const isUser = message.role === "user";
+
+  // Resolve file blocks: use pre-processed data if available, otherwise extract from legacy content
+  const { content, fileBlocks } = useMemo(() => {
+    // New messages: already have fileBlocks and markers
+    if (message.fileBlocks && message.fileBlocks.length > 0 && message.content.includes(FILE_BLOCK_MARKER)) {
+      return { content: message.content, fileBlocks: message.fileBlocks };
+    }
+    // Old messages: extract ````file: blocks at render time
+    if (LEGACY_FILE_BLOCK_RE.test(message.content)) {
+      // Reset lastIndex since we used .test()
+      LEGACY_FILE_BLOCK_RE.lastIndex = 0;
+      const { processedContent, fileBlocks } = extractFileBlocksFromContent(message.content);
+      if (fileBlocks.length > 0) {
+        return { content: processedContent, fileBlocks };
+      }
+    }
+    return { content: message.content, fileBlocks: [] as FileBlockData[] };
+  }, [message.content, message.fileBlocks]);
+
+  const hasFileBlocks = fileBlocks.length > 0 && content.includes(FILE_BLOCK_MARKER);
 
   return (
     <div className="flex gap-3 items-start animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -322,12 +475,40 @@ export function MessageBubble({ message }: { message: Message }) {
         )}
 
         <div className="text-sm leading-relaxed text-text-secondary prose prose-invert prose-sm max-w-none prose-p:my-1 prose-headings:text-text-primary prose-strong:text-text-primary prose-a:text-accent-blue">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={markdownComponents}
-          >
-            {message.content}
-          </ReactMarkdown>
+          {hasFileBlocks ? (
+            // Split content on file block markers, interleave markdown and FileBlockCards
+            (() => {
+              const parts = content.split(FILE_BLOCK_SPLIT_RE);
+              // parts alternates: [text, index, text, index, text, ...]
+              return parts.map((part, i) => {
+                if (i % 2 === 1) {
+                  // This is a file block index
+                  const blockIdx = parseInt(part, 10);
+                  const block = fileBlocks[blockIdx];
+                  if (block) return <FileBlockCard key={`fb-${blockIdx}`} block={block} />;
+                  return null;
+                }
+                // This is a text segment — render with ReactMarkdown
+                if (!part.trim()) return null;
+                return (
+                  <ReactMarkdown
+                    key={`md-${i}`}
+                    remarkPlugins={[remarkGfm, remarkBreaks]}
+                    components={markdownComponents}
+                  >
+                    {part}
+                  </ReactMarkdown>
+                );
+              });
+            })()
+          ) : (
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm, remarkBreaks]}
+              components={markdownComponents}
+            >
+              {content}
+            </ReactMarkdown>
+          )}
         </div>
 
         {message.skillInvocations?.map((invocation) => (

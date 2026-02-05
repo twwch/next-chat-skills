@@ -84,14 +84,12 @@ export function InputArea({ onSend, isLoading, onStop, models, selectedModel, on
     textareaRef.current?.focus();
   };
 
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
+  const uploadFiles = useCallback(async (files: File[]) => {
+    if (files.length === 0) return;
     setUploading(true);
     const results: Attachment[] = [];
 
-    for (const file of Array.from(files)) {
+    for (const file of files) {
       try {
         const formData = new FormData();
         formData.append("file", file);
@@ -117,10 +115,33 @@ export function InputArea({ onSend, isLoading, onStop, models, selectedModel, on
       setAttachments((prev) => [...prev, ...results]);
     }
     setUploading(false);
-    // Reset input so same file can be selected again
+  }, []);
+
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    await uploadFiles(Array.from(files));
     e.target.value = "";
     textareaRef.current?.focus();
-  }, []);
+  }, [uploadFiles]);
+
+  const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const imageFiles: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) imageFiles.push(file);
+      }
+    }
+
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      await uploadFiles(imageFiles);
+    }
+  }, [uploadFiles]);
 
   const removeAttachment = useCallback((index: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
@@ -198,6 +219,7 @@ export function InputArea({ onSend, isLoading, onStop, models, selectedModel, on
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             onInput={handleInput}
             rows={1}
             placeholder="Message Chat-Skills... (use @ to invoke a skill)"

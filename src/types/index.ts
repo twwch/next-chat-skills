@@ -14,12 +14,20 @@ export interface Attachment {
   dataUrl?: string
 }
 
+export interface FileBlockData {
+  filePath: string
+  content: string
+  lang: string
+  filename: string
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
   timestamp: number
   skillInvocations?: SkillInvocation[]
+  fileBlocks?: FileBlockData[]
   isAutomatic?: boolean
   attachments?: Attachment[]
 }
