@@ -11,6 +11,7 @@
   "dependencies": {
     "@ai-sdk/openai": "^3.0.25",
     "@ai-sdk/react": "^3.0.70",
+    "@auth/drizzle-adapter": "^1.11.1",
     "ai": "^6.0.68",
     "better-sqlite3": "^12.6.2",
     "class-variance-authority": "^0.7.1",
@@ -19,6 +20,7 @@
     "gray-matter": "^4.0.3",
     "lucide-react": "^0.563.0",
     "next": "16.1.6",
+    "next-auth": "^5.0.0-beta.30",
     "officeparser": "^6.0.4",
     "postgres": "^3.4.8",
     "radix-ui": "^1.4.3",

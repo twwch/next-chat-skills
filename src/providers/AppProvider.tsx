@@ -1,12 +1,21 @@
 "use client";
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
+import { useSession } from "next-auth/react";
 import type { Conversation, ConversationMeta, Settings, Skill, ActivityItem, Message } from "@/types";
 import { DEFAULT_SETTINGS } from "@/types";
 
 const MESSAGES_PER_PAGE = 20;
 
+interface User {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+  image?: string | null;
+}
+
 interface AppContextType {
+  user: User | null;
   conversations: Conversation[];
   currentConversationId: string | null;
   currentConversation: Conversation | null;
@@ -37,6 +46,7 @@ export function useApp() {
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
+  const { data: session, status } = useSession();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversationId, setCurrentConversationIdState] = useState<string | null>(null);
   const [settings, setSettingsState] = useState<Settings>(DEFAULT_SETTINGS);
@@ -44,6 +54,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [activeSkill, setActiveSkill] = useState<Skill | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+
+  const user: User | null = session?.user ? {
+    id: session.user.id as string,
+    name: session.user.name,
+    email: session.user.email,
+    image: session.user.image,
+  } : null;
 
   // Track which conversations are currently loading messages to avoid duplicate requests
   const loadingConvIds = useRef<Set<string>>(new Set());
@@ -140,8 +157,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return false;
   }, [conversations]);
 
-  // Hydrate state from database on mount
+  // Hydrate state from database on mount (only when authenticated)
   useEffect(() => {
+    // Wait for session to load
+    if (status === "loading") return;
+    // Don't fetch data if not authenticated
+    if (status === "unauthenticated") {
+      setHydrated(true);
+      return;
+    }
+
     async function hydrate() {
       try {
         const [convRes, settingsRes] = await Promise.all([
@@ -184,7 +209,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     }
     hydrate();
-  }, []);
+  }, [status]);
 
   // Wrapper for setCurrentConversationId that also loads messages
   const setCurrentConversationId = useCallback((id: string | null) => {
@@ -342,6 +367,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   return (
     <AppContext.Provider
       value={{
+        user,
         conversations,
         currentConversationId,
         currentConversation,

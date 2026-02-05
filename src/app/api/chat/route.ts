@@ -1,6 +1,7 @@
 import { streamText, createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { listSkills } from "@/lib/skills-reader";
+import { auth } from "@/lib/auth";
 import fs from "fs";
 import path from "path";
 
@@ -26,6 +27,13 @@ function extractText(msg: IncomingMessage): string {
 }
 
 export async function POST(req: Request) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return new Response(
+      JSON.stringify({ error: "Unauthorized" }),
+      { status: 401, headers: { "Content-Type": "application/json" } }
+    );
+  }
   const body = await req.json();
   const { messages, settings, images } = body as {
     messages: IncomingMessage[];
@@ -339,7 +347,7 @@ Be helpful, concise, and use skills when they are relevant to the user's request
     model: openai.chat(model),
     system: systemPrompt,
     messages: finalMessages,
-    maxOutputTokens: 16384,
+    maxOutputTokens: 65536,
   });
 
   // Create a custom stream that includes usage data

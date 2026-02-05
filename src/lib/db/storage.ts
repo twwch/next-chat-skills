@@ -19,13 +19,21 @@ export interface PaginatedMessages {
 }
 
 export interface StorageProvider {
-  // Conversations
+  // Conversations (legacy - without user filtering)
   listConversations(): Promise<Conversation[]>;
   listConversationsMeta(): Promise<ConversationMeta[]>;
   getConversation(id: string): Promise<Conversation | null>;
   createConversation(conv: Conversation): Promise<Conversation>;
   updateConversation(conv: Conversation): Promise<Conversation>;
   deleteConversation(id: string): Promise<void>;
+
+  // Conversations (user-aware)
+  listConversationsByUser(userId: string): Promise<Conversation[]>;
+  listConversationsMetaByUser(userId: string): Promise<ConversationMeta[]>;
+  getConversationByUser(id: string, userId: string): Promise<Conversation | null>;
+  createConversationForUser(conv: Conversation, userId: string): Promise<Conversation>;
+  updateConversationForUser(conv: Conversation, userId: string): Promise<Conversation>;
+  deleteConversationForUser(id: string, userId: string): Promise<void>;
 
   // Messages
   addMessage(conversationId: string, message: Message): Promise<void>;
@@ -36,7 +44,11 @@ export interface StorageProvider {
   addActivity(conversationId: string, activity: ActivityItem): Promise<void>;
   clearActivities(conversationId: string): Promise<void>;
 
-  // Settings
+  // Settings (legacy - without user filtering)
   getSettings(): Promise<Settings | null>;
   saveSettings(settings: Settings): Promise<Settings>;
+
+  // Settings (user-aware)
+  getSettingsByUser(userId: string): Promise<Settings | null>;
+  saveSettingsByUser(userId: string, settings: Settings): Promise<Settings>;
 }

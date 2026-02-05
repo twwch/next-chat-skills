@@ -37,6 +37,7 @@ function getRelativeTime(ts: number): string {
 
 export function Sidebar() {
   const {
+    user,
     conversations,
     currentConversationId,
     setCurrentConversationId,
@@ -184,12 +185,23 @@ export function Sidebar() {
       {/* User */}
       <div className="mt-auto px-4 py-3 border-t border-border-glass">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-accent-purple to-accent-blue flex items-center justify-center text-sm font-semibold">
-            U
-          </div>
+          {user?.image ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={user.image}
+              alt={user.name || "User"}
+              className="w-8 h-8 rounded-full object-cover"
+            />
+          ) : (
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-accent-purple to-accent-blue flex items-center justify-center text-sm font-semibold">
+              {user?.name?.[0]?.toUpperCase() || "U"}
+            </div>
+          )}
           <div>
-            <div className="text-sm font-medium">User</div>
-            <div className="text-[11px] text-text-muted">Local Mode</div>
+            <div className="text-sm font-medium">{user?.name || "User"}</div>
+            <div className="text-[11px] text-text-muted truncate max-w-[160px]">
+              {user?.email || "Local Mode"}
+            </div>
           </div>
         </div>
       </div>

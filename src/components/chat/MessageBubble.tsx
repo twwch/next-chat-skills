@@ -7,6 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { SkillInvokeCard } from "@/components/skill-cards/SkillInvokeCard";
+import { useApp } from "@/providers/AppProvider";
 import { Code2, FileCode, FileText, FileJson, Braces, Eye, Download, Layers, User } from "lucide-react";
 
 function formatTime(ts: number): string {
@@ -433,6 +434,7 @@ const markdownComponents: Components = {
 };
 
 export function MessageBubble({ message }: { message: Message }) {
+  const { user } = useApp();
   const isUser = message.role === "user";
 
   // Resolve file blocks: use pre-processed data if available, otherwise extract from legacy content
@@ -457,23 +459,28 @@ export function MessageBubble({ message }: { message: Message }) {
 
   return (
     <div className="flex gap-3 items-start animate-in fade-in slide-in-from-bottom-2 duration-300">
-      <div
-        className={`w-8 h-8 rounded-lg shrink-0 flex items-center justify-center ${
-          isUser
-            ? "bg-gradient-to-br from-accent-purple to-accent-blue"
-            : "bg-gradient-to-br from-accent-green to-accent-blue"
-        }`}
-      >
-        {isUser ? (
-          <User className="w-[18px] h-[18px] text-white" />
+      {isUser ? (
+        user?.image ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={user.image}
+            alt={user.name || "User"}
+            className="w-8 h-8 rounded-lg shrink-0 object-cover"
+          />
         ) : (
+          <div className="w-8 h-8 rounded-lg shrink-0 flex items-center justify-center bg-gradient-to-br from-accent-purple to-accent-blue">
+            <User className="w-[18px] h-[18px] text-white" />
+          </div>
+        )
+      ) : (
+        <div className="w-8 h-8 rounded-lg shrink-0 flex items-center justify-center bg-gradient-to-br from-accent-green to-accent-blue">
           <Layers className="w-[18px] h-[18px] text-white" />
-        )}
-      </div>
+        </div>
+      )}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1.5">
           <span className="text-[13px] font-semibold">
-            {isUser ? "You" : "Next-Chat-Skills"}
+            {isUser ? (user?.name || "You") : "Next-Chat-Skills"}
           </span>
           <span className="text-[11px] text-text-muted">
             {formatTime(message.timestamp)}
