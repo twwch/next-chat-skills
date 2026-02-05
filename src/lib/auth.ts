@@ -8,6 +8,8 @@ import * as schemaPg from './db/schema-pg';
 import * as schemaSqlite from './db/schema-sqlite';
 import type { Adapter } from 'next-auth/adapters';
 import { authConfig } from './auth.config';
+import { mkdirSync, existsSync } from 'fs';
+import { dirname } from 'path';
 
 // Ensure auth tables exist in PostgreSQL
 async function ensurePgAuthTables(client: ReturnType<typeof postgres>) {
@@ -148,6 +150,13 @@ function getAdapter(): Adapter {
     }) as any;
   } else {
     const dbPath = process.env.SQLITE_PATH || './data/chat-skills.db';
+
+    // Ensure directory exists before creating database
+    const dbDir = dirname(dbPath);
+    if (!existsSync(dbDir)) {
+      mkdirSync(dbDir, { recursive: true });
+    }
+
     const sqlite = new Database(dbPath);
     sqlite.pragma('journal_mode = WAL');
     sqlite.pragma('foreign_keys = ON');
