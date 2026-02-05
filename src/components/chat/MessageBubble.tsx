@@ -7,7 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { SkillInvokeCard } from "@/components/skill-cards/SkillInvokeCard";
-import { Code2, FileCode, FileText, FileJson, Braces, Eye, Download } from "lucide-react";
+import { Code2, FileCode, FileText, FileJson, Braces, Eye, Download, Layers, User } from "lucide-react";
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString("en-US", {
@@ -303,6 +303,33 @@ function FileBlockCard({ block }: { block: FileBlockData }) {
 }
 
 const markdownComponents: Components = {
+  h1: ({ children }) => (
+    <h1 className="text-xl font-bold text-text-secondary mt-4 mb-2">{children}</h1>
+  ),
+  h2: ({ children }) => (
+    <h2 className="text-lg font-bold text-text-secondary mt-3 mb-2">{children}</h2>
+  ),
+  h3: ({ children }) => (
+    <h3 className="text-base font-semibold text-text-secondary mt-2.5 mb-1.5">{children}</h3>
+  ),
+  h4: ({ children }) => (
+    <h4 className="text-sm font-semibold text-text-secondary mt-2 mb-1">{children}</h4>
+  ),
+  h5: ({ children }) => (
+    <h5 className="text-sm font-medium text-text-secondary mt-1.5 mb-1">{children}</h5>
+  ),
+  h6: ({ children }) => (
+    <h6 className="text-xs font-medium text-text-muted mt-1.5 mb-1">{children}</h6>
+  ),
+  ul: ({ children }) => (
+    <ul className="list-disc list-outside ml-4 my-1.5 space-y-0.5">{children}</ul>
+  ),
+  ol: ({ children }) => (
+    <ol className="list-decimal list-outside ml-4 my-1.5 space-y-0.5">{children}</ol>
+  ),
+  li: ({ children }) => (
+    <li className="text-text-secondary pl-1">{children}</li>
+  ),
   blockquote: ({ children }) => {
     const text = extractTextContent(children);
     if (text.includes("File saved:")) {
@@ -431,18 +458,22 @@ export function MessageBubble({ message }: { message: Message }) {
   return (
     <div className="flex gap-3 items-start animate-in fade-in slide-in-from-bottom-2 duration-300">
       <div
-        className={`w-8 h-8 rounded-full shrink-0 flex items-center justify-center text-sm font-semibold ${
+        className={`w-8 h-8 rounded-lg shrink-0 flex items-center justify-center ${
           isUser
             ? "bg-gradient-to-br from-accent-purple to-accent-blue"
-            : "bg-gradient-to-br from-accent-green to-accent-cyan"
+            : "bg-gradient-to-br from-accent-green to-accent-blue"
         }`}
       >
-        {isUser ? "U" : "S"}
+        {isUser ? (
+          <User className="w-[18px] h-[18px] text-white" />
+        ) : (
+          <Layers className="w-[18px] h-[18px] text-white" />
+        )}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1.5">
           <span className="text-[13px] font-semibold">
-            {isUser ? "You" : "Chat-Skills"}
+            {isUser ? "You" : "Next-Chat-Skills"}
           </span>
           <span className="text-[11px] text-text-muted">
             {formatTime(message.timestamp)}

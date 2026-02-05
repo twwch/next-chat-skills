@@ -22,7 +22,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Chat-Skills",
+  title: "Next-Chat-Skills",
   description: "Chat with AI Skills - Build with conversations",
 };
 

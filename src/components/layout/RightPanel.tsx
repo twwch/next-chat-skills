@@ -57,7 +57,7 @@ export function RightPanel() {
   return (
     <aside className="w-[300px] min-w-[300px] bg-bg-secondary border-l border-border-glass flex flex-col h-full overflow-hidden">
       {/* Top: Skill Context (fixed) */}
-      <div className="shrink-0">
+      <div className="shrink-0 relative z-20 bg-bg-secondary">
         <div className="px-4 py-3.5 border-b border-border-glass font-heading text-[13px] font-semibold flex items-center gap-2">
           <Layers className="w-4 h-4 text-accent-green" />
           Skill Context
@@ -105,7 +105,7 @@ export function RightPanel() {
       {/* Middle: Activity Timeline (scrollable) */}
       {activities.length > 0 && (
         <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
-          <div className="text-xs font-semibold text-text-secondary mb-2.5 pt-3 border-t border-border-glass sticky top-0 bg-bg-secondary pb-1">
+          <div className="text-xs font-semibold text-text-secondary mb-2.5 pt-3 border-t border-border-glass sticky top-0 bg-bg-secondary pb-1 z-10">
             Activity Timeline
           </div>
           {activities.map((item, i) => (

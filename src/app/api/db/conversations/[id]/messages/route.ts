@@ -1,6 +1,26 @@
 import { NextResponse } from 'next/server';
 import { getStorage } from '@/lib/db';
 
+// GET /api/db/conversations/[id]/messages — get paginated messages
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const { searchParams } = new URL(request.url);
+    const page = parseInt(searchParams.get('page') || '1', 10);
+    const limit = parseInt(searchParams.get('limit') || '20', 10);
+
+    const storage = await getStorage();
+    const result = await storage.getMessages(id, page, limit);
+    return NextResponse.json(result);
+  } catch (error) {
+    console.error('Failed to get messages:', error);
+    return NextResponse.json({ error: 'Failed to get messages' }, { status: 500 });
+  }
+}
+
 // POST /api/db/conversations/[id]/messages — add a message
 export async function POST(
   request: Request,

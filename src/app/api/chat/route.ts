@@ -1,4 +1,4 @@
-import { streamText } from "ai";
+import { streamText, createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { listSkills } from "@/lib/skills-reader";
 import fs from "fs";
@@ -61,7 +61,7 @@ export async function POST(req: Request) {
   const allSkillNames = allSkills.map((s) => s.name);
 
   // Convert incoming UIMessages to the format streamText expects (needed early for @mention extraction)
-  const convertedMessages = messages
+  const allConvertedMessages = messages
     .map((m) => {
       const text = extractText(m);
       if (!text) return null;
@@ -71,6 +71,13 @@ export async function POST(req: Request) {
       };
     })
     .filter((m): m is NonNullable<typeof m> => m !== null);
+
+  // Limit to the latest 10 rounds (20 messages: user + assistant pairs)
+  const MAX_HISTORY_ROUNDS = 10;
+  const MAX_MESSAGES = MAX_HISTORY_ROUNDS * 2;
+  const convertedMessages = allConvertedMessages.length > MAX_MESSAGES
+    ? allConvertedMessages.slice(-MAX_MESSAGES)
+    : allConvertedMessages;
 
   // Extract @mentions from the latest user message BEFORE building the prompt.
   // If the user @mentions specific skills, only include those in the prompt
@@ -140,7 +147,7 @@ export async function POST(req: Request) {
     ? skillNameList.map((n) => `\`${n}\``).join(", ")
     : "(none)";
 
-  const systemPrompt = `You are Chat-Skills, an AI assistant that can leverage installed skills to help users.
+  const systemPrompt = `You are Next-Chat-Skills, an AI assistant that can leverage installed skills to help users.
 
 ## ⚠️ SKILL MATCHING RULES (READ FIRST — HIGHEST PRIORITY)
 
@@ -335,5 +342,23 @@ Be helpful, concise, and use skills when they are relevant to the user's request
     maxOutputTokens: 16384,
   });
 
-  return result.toUIMessageStreamResponse();
+  // Create a custom stream that includes usage data
+  const stream = createUIMessageStream({
+    execute: async ({ writer }) => {
+      // Merge the streamText result into our stream
+      writer.merge(result.toUIMessageStream());
+
+      // Wait for the stream to finish and write usage data
+      const usage = await result.usage;
+      writer.write({
+        type: "data-usage",
+        data: {
+          inputTokens: usage.inputTokens || 0,
+          outputTokens: usage.outputTokens || 0,
+        },
+      });
+    },
+  });
+
+  return createUIMessageStreamResponse({ stream });
 }

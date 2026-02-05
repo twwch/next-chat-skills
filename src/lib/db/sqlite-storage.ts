@@ -1,8 +1,8 @@
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { eq, asc, desc } from 'drizzle-orm';
+import { eq, asc, desc, sql, count } from 'drizzle-orm';
 import * as schema from './schema-sqlite';
-import type { StorageProvider } from './storage';
+import type { StorageProvider, ConversationMeta, PaginatedMessages } from './storage';
 import type { Conversation, Message, Settings, ActivityItem } from '@/types';
 import path from 'path';
 import fs from 'fs';
@@ -99,6 +99,35 @@ export async function createSqliteStorage(): Promise<StorageProvider> {
           updatedAt: row.updatedAt,
           messages: msgs,
           activities: (row.activities as ActivityItem[]) ?? [],
+        });
+      }
+      return result;
+    },
+
+    async listConversationsMeta() {
+      // Get conversations with message counts using a subquery
+      const rows = db
+        .select()
+        .from(schema.conversations)
+        .orderBy(desc(schema.conversations.updatedAt))
+        .all();
+
+      const result: ConversationMeta[] = [];
+      for (const row of rows) {
+        // Get message count for this conversation
+        const countResult = db
+          .select({ count: count() })
+          .from(schema.messages)
+          .where(eq(schema.messages.conversationId, row.id))
+          .get();
+
+        result.push({
+          id: row.id,
+          title: row.title,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          activities: (row.activities as ActivityItem[]) ?? [],
+          messageCount: countResult?.count ?? 0,
         });
       }
       return result;
@@ -235,6 +264,43 @@ export async function createSqliteStorage(): Promise<StorageProvider> {
         .set({ updatedAt: Date.now() })
         .where(eq(schema.conversations.id, conversationId))
         .run();
+    },
+
+    async getMessages(conversationId, page, limit): Promise<PaginatedMessages> {
+      // Get total count
+      const countResult = db
+        .select({ count: count() })
+        .from(schema.messages)
+        .where(eq(schema.messages.conversationId, conversationId))
+        .get();
+
+      const total = countResult?.count ?? 0;
+
+      // Calculate offset: we want newest messages first for display,
+      // but within a page we want chronological order.
+      // Page 1 = most recent messages, Page 2 = older messages, etc.
+      // We use DESC sort_order to get newest first, then reverse for display.
+      const offset = (page - 1) * limit;
+
+      // Get messages sorted by sort_order DESC (newest first for pagination)
+      // Then we'll reverse them for chronological display
+      const rows = db
+        .select()
+        .from(schema.messages)
+        .where(eq(schema.messages.conversationId, conversationId))
+        .orderBy(desc(schema.messages.sortOrder))
+        .limit(limit)
+        .offset(offset)
+        .all();
+
+      // Reverse to get chronological order within the page
+      const messages = rows.reverse().map(rowToMessage);
+
+      return {
+        messages,
+        total,
+        hasMore: offset + rows.length < total,
+      };
     },
 
     async addActivity(conversationId, activity) {

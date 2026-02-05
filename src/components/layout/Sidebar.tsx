@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useRef, useEffect } from "react";
 import { useApp } from "@/providers/AppProvider";
 import { useSkills } from "@/hooks/useSkills";
 import {
@@ -11,6 +12,7 @@ import {
   HelpCircle,
   Layers,
   Trash2,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -43,6 +45,38 @@ export function Sidebar() {
     setActiveSkill,
   } = useApp();
   const { skills } = useSkills();
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const confirmRef = useRef<HTMLDivElement>(null);
+
+  // Close confirmation when clicking outside
+  useEffect(() => {
+    if (!pendingDeleteId) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (confirmRef.current && !confirmRef.current.contains(e.target as Node)) {
+        setPendingDeleteId(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [pendingDeleteId]);
+
+  const handleDeleteClick = (e: React.MouseEvent, convId: string) => {
+    e.stopPropagation();
+    setPendingDeleteId(convId);
+  };
+
+  const handleConfirmDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (pendingDeleteId) {
+      deleteConversation(pendingDeleteId);
+      setPendingDeleteId(null);
+    }
+  };
+
+  const handleCancelDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPendingDeleteId(null);
+  };
 
   return (
     <aside className="w-[260px] min-w-[260px] bg-bg-secondary border-r border-border-glass flex flex-col h-full">
@@ -52,7 +86,7 @@ export function Sidebar() {
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-accent-green to-accent-blue flex items-center justify-center">
             <Layers className="w-[18px] h-[18px] text-white" />
           </div>
-          Chat-Skills
+          Next-Chat-Skills
         </div>
       </div>
 
@@ -76,7 +110,7 @@ export function Sidebar() {
           <div
             key={conv.id}
             className={cn(
-              "group flex items-center gap-2.5 px-4 py-2 cursor-pointer transition-colors text-sm border-l-2",
+              "group relative flex items-center gap-2.5 px-4 py-2 cursor-pointer transition-colors text-sm border-l-2",
               conv.id === currentConversationId
                 ? "bg-accent-green-dim text-accent-green border-l-accent-green"
                 : "text-text-secondary border-l-transparent hover:bg-bg-glass hover:text-text-primary"
@@ -89,14 +123,34 @@ export function Sidebar() {
               {getRelativeTime(conv.updatedAt)}
             </span>
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                deleteConversation(conv.id);
-              }}
+              onClick={(e) => handleDeleteClick(e, conv.id)}
               className="hidden group-hover:flex w-5 h-5 items-center justify-center text-text-muted hover:text-accent-red transition-colors cursor-pointer"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
+
+            {/* Delete confirmation popover */}
+            {pendingDeleteId === conv.id && (
+              <div
+                ref={confirmRef}
+                className="absolute right-2 top-1/2 -translate-y-1/2 z-50 flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-bg-primary border border-border-glass shadow-lg"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <span className="text-xs text-text-muted whitespace-nowrap">删除?</span>
+                <button
+                  onClick={handleConfirmDelete}
+                  className="px-2 py-0.5 rounded text-xs bg-accent-red/20 text-accent-red hover:bg-accent-red/30 transition-colors cursor-pointer"
+                >
+                  确定
+                </button>
+                <button
+                  onClick={handleCancelDelete}
+                  className="p-0.5 rounded text-text-muted hover:text-text-primary hover:bg-bg-glass transition-colors cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
           </div>
         ))}
         {conversations.length === 0 && (

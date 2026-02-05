@@ -2,13 +2,14 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useApp } from "@/providers/AppProvider";
-import { Search, Settings, Pencil } from "lucide-react";
+import { Settings, Pencil } from "lucide-react";
 
 interface TopBarProps {
   onOpenSettings: () => void;
+  tokenUsage?: { input: number; output: number };
 }
 
-export function TopBar({ onOpenSettings }: TopBarProps) {
+export function TopBar({ onOpenSettings, tokenUsage }: TopBarProps) {
   const { currentConversation, skills, updateConversationById } = useApp();
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
@@ -64,7 +65,7 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
             className="group font-heading text-[15px] font-semibold flex items-center gap-2 cursor-pointer hover:text-accent-green transition-colors"
             onClick={startEditing}
           >
-            {currentConversation?.title || "Chat-Skills"}
+            {currentConversation?.title || "Next-Chat-Skills"}
             {currentConversation && (
               <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-60 transition-opacity" />
             )}
@@ -77,9 +78,14 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
         )}
       </div>
       <div className="flex items-center gap-2">
-        <button className="w-[34px] h-[34px] rounded-lg border border-border-glass bg-transparent text-text-secondary flex items-center justify-center hover:bg-bg-glass hover:text-text-primary hover:border-border-active transition-all cursor-pointer">
-          <Search className="w-4 h-4" />
-        </button>
+        {tokenUsage && (tokenUsage.input > 0 || tokenUsage.output > 0) && (
+          <div className="flex items-center gap-1.5 text-[11px] text-text-tertiary font-mono">
+            <span className="text-accent-green">{tokenUsage.input.toLocaleString()}</span>
+            <span>/</span>
+            <span className="text-accent-blue">{tokenUsage.output.toLocaleString()}</span>
+            <span className="text-text-quaternary">tokens</span>
+          </div>
+        )}
         <button
           onClick={onOpenSettings}
           className="w-[34px] h-[34px] rounded-lg border border-border-glass bg-transparent text-text-secondary flex items-center justify-center hover:bg-bg-glass hover:text-text-primary hover:border-border-active transition-all cursor-pointer"

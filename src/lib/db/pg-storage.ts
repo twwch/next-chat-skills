@@ -1,8 +1,8 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { eq, asc, desc } from 'drizzle-orm';
+import { eq, asc, desc, count } from 'drizzle-orm';
 import * as schema from './schema-pg';
-import type { StorageProvider } from './storage';
+import type { StorageProvider, ConversationMeta, PaginatedMessages } from './storage';
 import type { Conversation, Message, Settings, ActivityItem } from '@/types';
 
 export async function createPgStorage(): Promise<StorageProvider> {
@@ -99,6 +99,32 @@ export async function createPgStorage(): Promise<StorageProvider> {
           updatedAt: row.updatedAt,
           messages: msgs,
           activities: (row.activities as ActivityItem[]) ?? [],
+        });
+      }
+      return result;
+    },
+
+    async listConversationsMeta() {
+      const rows = await db
+        .select()
+        .from(schema.conversations)
+        .orderBy(desc(schema.conversations.updatedAt));
+
+      const result: ConversationMeta[] = [];
+      for (const row of rows) {
+        // Get message count for this conversation
+        const countResult = await db
+          .select({ count: count() })
+          .from(schema.messages)
+          .where(eq(schema.messages.conversationId, row.id));
+
+        result.push({
+          id: row.id,
+          title: row.title,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          activities: (row.activities as ActivityItem[]) ?? [],
+          messageCount: countResult[0]?.count ?? 0,
         });
       }
       return result;
@@ -227,6 +253,37 @@ export async function createPgStorage(): Promise<StorageProvider> {
       await db.update(schema.conversations)
         .set({ updatedAt: Date.now() })
         .where(eq(schema.conversations.id, conversationId));
+    },
+
+    async getMessages(conversationId, page, limit): Promise<PaginatedMessages> {
+      // Get total count
+      const countResult = await db
+        .select({ count: count() })
+        .from(schema.messages)
+        .where(eq(schema.messages.conversationId, conversationId));
+
+      const total = countResult[0]?.count ?? 0;
+
+      // Calculate offset
+      const offset = (page - 1) * limit;
+
+      // Get messages sorted by sort_order DESC (newest first for pagination)
+      const rows = await db
+        .select()
+        .from(schema.messages)
+        .where(eq(schema.messages.conversationId, conversationId))
+        .orderBy(desc(schema.messages.sortOrder))
+        .limit(limit)
+        .offset(offset);
+
+      // Reverse to get chronological order within the page
+      const messages = rows.reverse().map(rowToMessage);
+
+      return {
+        messages,
+        total,
+        hasMore: offset + rows.length < total,
+      };
     },
 
     async addActivity(conversationId, activity) {

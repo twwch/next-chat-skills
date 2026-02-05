@@ -1,3 +1,20 @@
+export interface TokenUsage {
+  input: number
+  output: number
+}
+
+// Conversation metadata (without messages) - returned from list API
+export interface ConversationMeta {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  activities?: ActivityItem[]
+  tokenUsage?: TokenUsage
+  messageCount: number
+}
+
+// Full conversation with messages
 export interface Conversation {
   id: string
   title: string
@@ -5,6 +22,12 @@ export interface Conversation {
   updatedAt: number
   messages: Message[]
   activities?: ActivityItem[]
+  tokenUsage?: TokenUsage
+  // Pagination state for messages
+  messageCount?: number
+  messagesLoaded?: boolean
+  hasMoreMessages?: boolean
+  currentPage?: number
 }
 
 export interface Attachment {

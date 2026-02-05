@@ -1,8 +1,10 @@
 "use client";
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
-import type { Conversation, Settings, Skill, ActivityItem } from "@/types";
+import type { Conversation, ConversationMeta, Settings, Skill, ActivityItem, Message } from "@/types";
 import { DEFAULT_SETTINGS } from "@/types";
+
+const MESSAGES_PER_PAGE = 20;
 
 interface AppContextType {
   conversations: Conversation[];
@@ -12,6 +14,7 @@ interface AppContextType {
   skills: Skill[];
   activities: ActivityItem[];
   activeSkill: Skill | null;
+  isLoadingMessages: boolean;
   setCurrentConversationId: (id: string | null) => void;
   createConversation: (title?: string) => Conversation;
   updateConversation: (conv: Conversation) => void;
@@ -22,6 +25,7 @@ interface AppContextType {
   addActivity: (a: ActivityItem, convId?: string) => void;
   setActiveSkill: (s: Skill | null) => void;
   clearActivities: () => void;
+  loadMoreMessages: (convId: string) => Promise<boolean>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -34,11 +38,15 @@ export function useApp() {
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  const [currentConversationId, setCurrentConversationIdState] = useState<string | null>(null);
   const [settings, setSettingsState] = useState<Settings>(DEFAULT_SETTINGS);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [activeSkill, setActiveSkill] = useState<Skill | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+
+  // Track which conversations are currently loading messages to avoid duplicate requests
+  const loadingConvIds = useRef<Set<string>>(new Set());
 
   // Debounce mechanism for rapid conversation updates (e.g., during skill streaming)
   const pendingUpdates = useRef<Map<string, Conversation>>(new Map());
@@ -60,6 +68,78 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }, 300);
   }
 
+  // Load messages for a conversation (first page)
+  const loadMessagesForConversation = useCallback(async (convId: string) => {
+    if (loadingConvIds.current.has(convId)) return;
+    loadingConvIds.current.add(convId);
+    setIsLoadingMessages(true);
+
+    try {
+      const res = await fetch(`/api/db/conversations/${convId}/messages?page=1&limit=${MESSAGES_PER_PAGE}`);
+      if (res.ok) {
+        const data: { messages: Message[]; total: number; hasMore: boolean } = await res.json();
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === convId
+              ? {
+                  ...c,
+                  messages: data.messages,
+                  messagesLoaded: true,
+                  hasMoreMessages: data.hasMore,
+                  currentPage: 1,
+                  messageCount: data.total,
+                }
+              : c
+          )
+        );
+      }
+    } catch (err) {
+      console.error('Failed to load messages:', err);
+    } finally {
+      loadingConvIds.current.delete(convId);
+      setIsLoadingMessages(false);
+    }
+  }, []);
+
+  // Load more messages (older messages) for infinite scroll
+  const loadMoreMessages = useCallback(async (convId: string): Promise<boolean> => {
+    if (loadingConvIds.current.has(convId)) return false;
+
+    const conv = conversations.find((c) => c.id === convId);
+    if (!conv || !conv.hasMoreMessages) return false;
+
+    loadingConvIds.current.add(convId);
+    setIsLoadingMessages(true);
+
+    try {
+      const nextPage = (conv.currentPage || 1) + 1;
+      const res = await fetch(`/api/db/conversations/${convId}/messages?page=${nextPage}&limit=${MESSAGES_PER_PAGE}`);
+      if (res.ok) {
+        const data: { messages: Message[]; total: number; hasMore: boolean } = await res.json();
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === convId
+              ? {
+                  ...c,
+                  // Prepend older messages to the beginning
+                  messages: [...data.messages, ...c.messages],
+                  hasMoreMessages: data.hasMore,
+                  currentPage: nextPage,
+                }
+              : c
+          )
+        );
+        return data.hasMore;
+      }
+    } catch (err) {
+      console.error('Failed to load more messages:', err);
+    } finally {
+      loadingConvIds.current.delete(convId);
+      setIsLoadingMessages(false);
+    }
+    return false;
+  }, [conversations]);
+
   // Hydrate state from database on mount
   useEffect(() => {
     async function hydrate() {
@@ -69,13 +149,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           fetch('/api/db/settings'),
         ]);
         if (convRes.ok) {
-          const convs: Conversation[] = await convRes.json();
+          // Now returns ConversationMeta[] (without messages)
+          const metas: ConversationMeta[] = await convRes.json();
+          // Convert to Conversation[] with empty messages
+          const convs: Conversation[] = metas.map((meta) => ({
+            id: meta.id,
+            title: meta.title,
+            createdAt: meta.createdAt,
+            updatedAt: meta.updatedAt,
+            messages: [],
+            activities: meta.activities || [],
+            tokenUsage: meta.tokenUsage,
+            messageCount: meta.messageCount,
+            messagesLoaded: false,
+            hasMoreMessages: meta.messageCount > 0,
+            currentPage: 0,
+          }));
           setConversations(convs);
 
           // Restore conversation from URL ?id= param
           const urlId = new URLSearchParams(window.location.search).get("id");
           if (urlId && convs.some((c) => c.id === urlId)) {
-            setCurrentConversationId(urlId);
+            setCurrentConversationIdState(urlId);
           }
         }
         if (settingsRes.ok) {
@@ -90,6 +185,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     hydrate();
   }, []);
+
+  // Wrapper for setCurrentConversationId that also loads messages
+  const setCurrentConversationId = useCallback((id: string | null) => {
+    setCurrentConversationIdState(id);
+    if (id) {
+      // Check if messages need to be loaded
+      const conv = conversations.find((c) => c.id === id);
+      if (conv && !conv.messagesLoaded && conv.messageCount && conv.messageCount > 0) {
+        loadMessagesForConversation(id);
+      }
+    }
+  }, [conversations, loadMessagesForConversation]);
+
+  // Also load messages when currentConversationId is set from URL on hydration
+  useEffect(() => {
+    if (!hydrated || !currentConversationId) return;
+    const conv = conversations.find((c) => c.id === currentConversationId);
+    if (conv && !conv.messagesLoaded && conv.messageCount && conv.messageCount > 0) {
+      loadMessagesForConversation(currentConversationId);
+    }
+  }, [hydrated, currentConversationId, conversations, loadMessagesForConversation]);
 
   // Sync currentConversationId to URL (only after hydration to avoid clearing the param before it's read)
   useEffect(() => {
@@ -116,10 +232,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       updatedAt: Date.now(),
       messages: [],
       activities: [],
+      messageCount: 0,
+      messagesLoaded: true,
+      hasMoreMessages: false,
+      currentPage: 1,
     };
     // Optimistic local update
     setConversations((prev) => [conv, ...prev]);
-    setCurrentConversationId(conv.id);
+    setCurrentConversationIdState(conv.id);
 
     // Background persist
     fetch('/api/db/conversations', {
@@ -144,20 +264,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const updateConversationById = useCallback(
     (id: string, updater: (conv: Conversation) => Conversation) => {
-      let updated: Conversation | null = null;
-      setConversations((prev) =>
-        prev.map((c) => {
+      // Move persist logic inside the callback to ensure it runs after the state update
+      // (React 18 batches state updates, so the callback may not run immediately)
+      setConversations((prev) => {
+        let updated: Conversation | null = null;
+        const result = prev.map((c) => {
           if (c.id !== id) return c;
           updated = { ...updater(c), updatedAt: Date.now() };
           return updated;
-        })
-      );
+        });
 
-      // Debounced persist
-      if (updated) {
-        pendingUpdates.current.set(id, updated);
-        scheduleFlush();
-      }
+        // Debounced persist - must be inside callback to ensure updated is set
+        if (updated) {
+          pendingUpdates.current.set(id, updated);
+          scheduleFlush();
+        }
+
+        return result;
+      });
     },
     []
   );
@@ -225,6 +349,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         skills,
         activities,
         activeSkill,
+        isLoadingMessages,
         setCurrentConversationId,
         createConversation,
         updateConversation,
@@ -235,6 +360,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         addActivity,
         setActiveSkill,
         clearActivities,
+        loadMoreMessages,
       }}
     >
       {hydrated ? children : null}

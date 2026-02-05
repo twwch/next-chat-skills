@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getStorage } from '@/lib/db';
 
-// GET /api/db/conversations — list all conversations
+// GET /api/db/conversations — list all conversations (metadata only, no messages)
 export async function GET() {
   try {
     const storage = await getStorage();
-    const conversations = await storage.listConversations();
+    const conversations = await storage.listConversationsMeta();
     return NextResponse.json(conversations);
   } catch (error) {
     console.error('Failed to list conversations:', error);

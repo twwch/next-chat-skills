@@ -222,7 +222,7 @@ export function InputArea({ onSend, isLoading, onStop, models, selectedModel, on
             onPaste={handlePaste}
             onInput={handleInput}
             rows={1}
-            placeholder="Message Chat-Skills... (use @ to invoke a skill)"
+            placeholder="Message Next-Chat-Skills... (use @ to invoke a skill)"
             className="flex-1 bg-transparent border-none outline-none text-text-primary text-sm leading-relaxed resize-none min-h-[22px] max-h-[120px] placeholder:text-text-muted font-sans"
           />
           <div className="flex items-center gap-1 shrink-0">
@@ -293,7 +293,7 @@ export function InputArea({ onSend, isLoading, onStop, models, selectedModel, on
               </div>
             )}
           </div>
-          <span>Powered by Chat-Skills Engine</span>
+          <span>Powered by Next-Chat-Skills Engine</span>
         </div>
       </div>
 

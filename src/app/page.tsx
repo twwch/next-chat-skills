@@ -320,6 +320,8 @@ export default function Home() {
     updateConversationById,
     settings,
     addActivity,
+    loadMoreMessages,
+    isLoadingMessages,
   } = useApp();
 
   const { skills: installedSkills, refreshSkills } = useSkills();
@@ -328,6 +330,7 @@ export default function Home() {
   const [chatError, setChatError] = useState<string | null>(null);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState(settings.model || "gpt-4o");
+  const [tokenUsage, setTokenUsage] = useState({ input: 0, output: 0 });
   const conversationRef = useRef(currentConversation);
   conversationRef.current = currentConversation;
   const installedSkillNamesRef = useRef(installedSkillNames);
@@ -341,6 +344,15 @@ export default function Home() {
       setSelectedModel(settings.model);
     }
   }, [settings.model]);
+
+  // Sync tokenUsage when conversation changes
+  useEffect(() => {
+    if (currentConversation?.tokenUsage) {
+      setTokenUsage(currentConversation.tokenUsage);
+    } else {
+      setTokenUsage({ input: 0, output: 0 });
+    }
+  }, [currentConversationId, currentConversation?.tokenUsage]);
 
   // Fetch available models from the configured API
   useEffect(() => {
@@ -364,6 +376,16 @@ export default function Home() {
   // Track which conversation the current send belongs to,
   // so onFinish saves to the correct conversation even if the user switches.
   const sentConvIdRef = useRef<string | null>(null);
+
+  // Map assistant message IDs to conversation IDs for multi-conversation support
+  const messageToConvIdRef = useRef<Map<string, string>>(new Map());
+  // Queue of pending sends: when a new assistant message appears, map it to the oldest pending convId
+  const pendingSendsRef = useRef<string[]>([]);
+  // Track which assistant message IDs we've already mapped
+  const mappedMessageIdsRef = useRef<Set<string>>(new Set());
+  // Store streaming content per conversation so it persists when switching conversations
+  // Key: conversationId, Value: { messageId, content }
+  const streamingContentRef = useRef<Map<string, { id: string; content: string }>>(new Map());
 
   // When the user clicks stop, prevent onFinish and skill callbacks from
   // saving duplicate messages or triggering further AI rounds.
@@ -408,10 +430,41 @@ export default function Home() {
   } = useChat({
     transport,
     id: "main-chat",
+    onData: (dataPart) => {
+      // Handle custom data parts from the server
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data = dataPart as any;
+      if (data?.type === "data-usage" && data?.data) {
+        const inputTokens = data.data.inputTokens || 0;
+        const outputTokens = data.data.outputTokens || 0;
+
+        // Update local state
+        setTokenUsage((prev) => ({
+          input: prev.input + inputTokens,
+          output: prev.output + outputTokens,
+        }));
+
+        // Persist to conversation
+        const convId = sentConvIdRef.current;
+        if (convId) {
+          updateConversationById(convId, (conv) => ({
+            ...conv,
+            tokenUsage: {
+              input: (conv.tokenUsage?.input || 0) + inputTokens,
+              output: (conv.tokenUsage?.output || 0) + outputTokens,
+            },
+          }));
+        }
+      }
+    },
     onFinish: ({ message: finishedMsg }) => {
       if (stoppedRef.current) return;
-      const convId = sentConvIdRef.current;
+      // Use message-to-conversation mapping for multi-conversation support
+      const convId = messageToConvIdRef.current.get(finishedMsg.id) || sentConvIdRef.current;
       if (!convId) return;
+      // Clean up the mapping and stored streaming content
+      messageToConvIdRef.current.delete(finishedMsg.id);
+      streamingContentRef.current.delete(convId);
 
       const text = getTextContent(finishedMsg as unknown as Record<string, unknown>);
       const { cleanContent: afterSkills, invocations } = parseSkillBlocks(text, installedSkillNamesRef.current);
@@ -516,29 +569,97 @@ export default function Home() {
     },
   });
 
+  // Map new assistant messages to their conversation IDs and store streaming content
+  useEffect(() => {
+    for (const msg of chatMessages) {
+      if (msg.role === "assistant") {
+        // Map new messages to conversations
+        if (!mappedMessageIdsRef.current.has(msg.id)) {
+          mappedMessageIdsRef.current.add(msg.id);
+          // Take the oldest pending send from the queue
+          const convId = pendingSendsRef.current.shift();
+          if (convId) {
+            messageToConvIdRef.current.set(msg.id, convId);
+          }
+        }
+        // Store/update streaming content for the mapped conversation
+        const convId = messageToConvIdRef.current.get(msg.id);
+        if (convId) {
+          const content = getTextContent(msg as unknown as Record<string, unknown>);
+          streamingContentRef.current.set(convId, { id: msg.id, content });
+        }
+      }
+    }
+  }, [chatMessages]);
+
   const isStreaming = status === "streaming" || status === "submitted";
-  // Consider the conversation "busy" if the AI is streaming OR any skill invocations are still running
+  // Check if there's streaming content for the current conversation
+  const hasStreamingMsgForCurrentConv = isStreaming && (
+    // Check if we just sent a message to this conversation (covers gap before assistant response arrives)
+    sentConvIdRef.current === currentConversationId ||
+    // Check in chatMessages
+    chatMessages.some(
+      (msg) => msg.role === "assistant" && messageToConvIdRef.current.get(msg.id) === currentConversationId
+    ) ||
+    // Or check in stored streaming content (when chatMessages was cleared by setMessages)
+    streamingContentRef.current.has(currentConversationId!)
+  );
+  // Consider the conversation "busy" if the AI is streaming for this conversation OR any skill invocations are still running
   const hasRunningInvocations = currentConversation?.messages.some(
     (m) => m.skillInvocations?.some((si) => si.status === "running")
   ) ?? false;
-  const isLoading = isStreaming || hasRunningInvocations;
+  const isLoading = hasStreamingMsgForCurrentConv || hasRunningInvocations;
 
   // Sync stored conversation messages into useChat when switching conversations
   // so the AI has full history context when the user sends a new message.
   // Track both conversation ID and setMessages identity to handle cases where
   // useChat creates a new Chat instance (new setMessages) for the same or new ID.
-  const syncStateRef = useRef<{ convId: string | null; setMsgsFn: typeof setMessages | null }>({
+  // IMPORTANT: Skip syncing while any stream is active - calling setMessages
+  // during streaming corrupts the AI SDK's internal state.
+  const syncStateRef = useRef<{
+    convId: string | null;
+    setMsgsFn: typeof setMessages | null;
+    wasStreaming: boolean;
+    streamingConvId: string | null;
+  }>({
     convId: null,
     setMsgsFn: null,
+    wasStreaming: false,
+    streamingConvId: null,
   });
   useEffect(() => {
+    // Don't sync while streaming - it corrupts AI SDK state and causes errors
+    if (isStreaming) {
+      syncStateRef.current.wasStreaming = true;
+      syncStateRef.current.streamingConvId = currentConversationId;
+      return;
+    }
+
+    // After streaming finishes in the SAME conversation, don't resync.
+    // The chatMessages already has the correct messages from the stream.
+    // Calling setMessages immediately after streaming can corrupt AI SDK state.
+    if (syncStateRef.current.wasStreaming &&
+        syncStateRef.current.streamingConvId === currentConversationId) {
+      syncStateRef.current.wasStreaming = false;
+      syncStateRef.current.convId = currentConversationId;
+      syncStateRef.current.streamingConvId = null;
+      return;
+    }
+    syncStateRef.current.wasStreaming = false;
+    syncStateRef.current.streamingConvId = null;
+
     if (
       syncStateRef.current.convId === currentConversationId &&
       syncStateRef.current.setMsgsFn === setMessages
     ) {
       return; // Already synced for this conversation + setMessages
     }
-    syncStateRef.current = { convId: currentConversationId, setMsgsFn: setMessages };
+    syncStateRef.current = {
+      convId: currentConversationId,
+      setMsgsFn: setMessages,
+      wasStreaming: false,
+      streamingConvId: null,
+    };
 
     if (!currentConversation || currentConversation.messages.length === 0) {
       setMessages([]);
@@ -554,7 +675,7 @@ export default function Home() {
     }));
 
     setMessages(uiMessages);
-  }, [currentConversationId, currentConversation, setMessages]);
+  }, [currentConversationId, currentConversation, setMessages, isStreaming]);
 
   // Keep a stable ref to sendMessage so async callbacks can use the latest version
   const sendMessageRef = useRef(sendMessage);
@@ -907,6 +1028,41 @@ export default function Home() {
 
   const handleSend = useCallback(
     (content: string, attachments?: Attachment[]) => {
+      // If there's an ongoing stream, stop it first and save partial content
+      const isCurrentlyStreaming = status === "streaming" || status === "submitted";
+      if (isCurrentlyStreaming) {
+        stoppedRef.current = true;
+        const lastChat = chatMessages[chatMessages.length - 1];
+        if (lastChat?.role === "assistant") {
+          const prevConvId = messageToConvIdRef.current.get(lastChat.id) || sentConvIdRef.current;
+          if (prevConvId) {
+            const text = getTextContent(lastChat as unknown as Record<string, unknown>);
+            const { cleanContent: afterSkills } = parseSkillBlocks(text, installedSkillNamesRef.current);
+            const { cleanContent, files, fileBlocks } = parseFileBlocks(afterSkills);
+            // Clean up refs
+            streamingContentRef.current.delete(prevConvId);
+            messageToConvIdRef.current.delete(lastChat.id);
+
+            const partialMsg: Message = {
+              id: lastChat.id,
+              role: "assistant",
+              content: cleanContent,
+              timestamp: Date.now(),
+              fileBlocks: fileBlocks.length > 0 ? fileBlocks : undefined,
+            };
+            updateConversationById(prevConvId, (conv) => {
+              if (conv.messages.some((m) => m.id === partialMsg.id)) return conv;
+              return { ...conv, messages: [...conv.messages, partialMsg] };
+            });
+
+            if (files.length > 0) {
+              writeFilesToDisk(files);
+            }
+          }
+        }
+        stop();
+      }
+
       stoppedRef.current = false;
       setChatError(null);
       let conv = conversationRef.current;
@@ -959,10 +1115,12 @@ export default function Home() {
 
       // Track which conversation this send belongs to for onFinish
       sentConvIdRef.current = convId!;
+      // Add to pending queue for message-to-conversation mapping (supports multiple simultaneous streams)
+      pendingSendsRef.current.push(convId!);
 
       sendMessage({ text: fullContent });
     },
-    [createConversation, updateConversationById, sendMessage, currentConversationId]
+    [createConversation, updateConversationById, sendMessage, currentConversationId, status, chatMessages, stop]
   );
 
   const handleStop = useCallback(() => {
@@ -970,11 +1128,14 @@ export default function Home() {
     // Save whatever has been streamed so far before stopping
     const lastChat = chatMessages[chatMessages.length - 1];
     if (lastChat?.role === "assistant") {
-      const convId = sentConvIdRef.current;
+      const convId = messageToConvIdRef.current.get(lastChat.id) || sentConvIdRef.current;
       if (convId) {
         const text = getTextContent(lastChat as unknown as Record<string, unknown>);
         const { cleanContent: afterSkills } = parseSkillBlocks(text, installedSkillNames);
         const { cleanContent, files, fileBlocks } = parseFileBlocks(afterSkills);
+        // Clean up streaming content for this conversation
+        streamingContentRef.current.delete(convId);
+        messageToConvIdRef.current.delete(lastChat.id);
 
         const partialMsg: Message = {
           id: lastChat.id,
@@ -1012,6 +1173,9 @@ export default function Home() {
       }));
     }
 
+    // Clear sentConvIdRef so hasStreamingMsgForCurrentConv becomes false
+    sentConvIdRef.current = null;
+
     stop();
   }, [chatMessages, stop, updateConversationById, currentConversationId, installedSkillNames]);
 
@@ -1019,23 +1183,43 @@ export default function Home() {
   const displayMessages: Message[] =
     currentConversation?.messages.filter((m) => !m.isAutomatic) || [];
 
-  const lastChat = chatMessages[chatMessages.length - 1];
-  if (
-    isLoading &&
-    lastChat?.role === "assistant" &&
-    !displayMessages.find((m) => m.id === lastChat.id)
-  ) {
-    const rawText = getTextContent(lastChat as unknown as Record<string, unknown>);
-    // Convert completed file blocks to markers, then close any unclosed fences in remaining text
-    const { cleanContent: afterFiles, fileBlocks: streamFileBlocks } = parseFileBlocks(rawText);
-    const text = closeOpenCodeFences(afterFiles);
-    displayMessages.push({
-      id: lastChat.id,
-      role: "assistant",
-      content: text,
-      timestamp: Date.now(),
-      fileBlocks: streamFileBlocks.length > 0 ? streamFileBlocks : undefined,
-    });
+  // Find the streaming message that belongs to the current conversation
+  // First try chatMessages, then fall back to stored streamingContentRef (for when setMessages clears chatMessages)
+  if (isStreaming && currentConversationId) {
+    const streamingMsgInChat = chatMessages.find(
+      (msg) =>
+        msg.role === "assistant" &&
+        messageToConvIdRef.current.get(msg.id) === currentConversationId &&
+        !displayMessages.find((m) => m.id === msg.id)
+    );
+
+    if (streamingMsgInChat) {
+      // Message is in chatMessages - use it
+      const rawText = getTextContent(streamingMsgInChat as unknown as Record<string, unknown>);
+      const { cleanContent: afterFiles, fileBlocks: streamFileBlocks } = parseFileBlocks(rawText);
+      const text = closeOpenCodeFences(afterFiles);
+      displayMessages.push({
+        id: streamingMsgInChat.id,
+        role: "assistant",
+        content: text,
+        timestamp: Date.now(),
+        fileBlocks: streamFileBlocks.length > 0 ? streamFileBlocks : undefined,
+      });
+    } else {
+      // Check stored streaming content (for when user switched away and back)
+      const storedStreaming = streamingContentRef.current.get(currentConversationId);
+      if (storedStreaming && !displayMessages.find((m) => m.id === storedStreaming.id)) {
+        const { cleanContent: afterFiles, fileBlocks: streamFileBlocks } = parseFileBlocks(storedStreaming.content);
+        const text = closeOpenCodeFences(afterFiles);
+        displayMessages.push({
+          id: storedStreaming.id,
+          role: "assistant",
+          content: text,
+          timestamp: Date.now(),
+          fileBlocks: streamFileBlocks.length > 0 ? streamFileBlocks : undefined,
+        });
+      }
+    }
   }
 
   return (
@@ -1043,8 +1227,16 @@ export default function Home() {
       <Sidebar />
 
       <main className="flex-1 flex flex-col min-w-0">
-        <TopBar onOpenSettings={() => setShowSettings(true)} />
-        <ChatArea messages={displayMessages} isLoading={isLoading} error={chatError} onDismissError={() => setChatError(null)} />
+        <TopBar onOpenSettings={() => setShowSettings(true)} tokenUsage={tokenUsage} />
+        <ChatArea
+          messages={displayMessages}
+          isLoading={isLoading}
+          error={chatError}
+          onDismissError={() => setChatError(null)}
+          hasMoreMessages={currentConversation?.hasMoreMessages}
+          onLoadMore={currentConversationId ? () => loadMoreMessages(currentConversationId) : undefined}
+          isLoadingMore={isLoadingMessages}
+        />
         <InputArea
           onSend={handleSend}
           isLoading={isLoading}
