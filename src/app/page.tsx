@@ -1186,12 +1186,27 @@ export default function Home() {
   // Find the streaming message that belongs to the current conversation
   // First try chatMessages, then fall back to stored streamingContentRef (for when setMessages clears chatMessages)
   if (isStreaming && currentConversationId) {
-    const streamingMsgInChat = chatMessages.find(
+    // Try to find a mapped streaming message
+    let streamingMsgInChat = chatMessages.find(
       (msg) =>
         msg.role === "assistant" &&
         messageToConvIdRef.current.get(msg.id) === currentConversationId &&
         !displayMessages.find((m) => m.id === msg.id)
     );
+
+    // Fallback: if we just sent a message to this conversation but the useEffect mapping
+    // hasn't run yet (refs update after render), use the last assistant message in chatMessages.
+    // This fixes the timing issue where the mapping happens in useEffect (after render)
+    // but we check for it during render.
+    if (!streamingMsgInChat && sentConvIdRef.current === currentConversationId) {
+      for (let i = chatMessages.length - 1; i >= 0; i--) {
+        const msg = chatMessages[i];
+        if (msg.role === "assistant" && !displayMessages.find((m) => m.id === msg.id)) {
+          streamingMsgInChat = msg;
+          break;
+        }
+      }
+    }
 
     if (streamingMsgInChat) {
       // Message is in chatMessages - use it
