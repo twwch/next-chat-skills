@@ -48,10 +48,11 @@ export const verificationTokens = sqliteTable('verification_tokens', {
 ]);
 
 // Application tables
+// Note: user_id has no foreign key to allow fingerprint-based anonymous users
 export const conversations = sqliteTable('conversations', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
-  userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  userId: text('user_id'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
   activities: text('activities', { mode: 'json' }).$type<ActivityItem[]>().default([]),
@@ -69,9 +70,10 @@ export const messages = sqliteTable('messages', {
   sortOrder: integer('sort_order').notNull(),
 });
 
+// Note: user_id has no foreign key to allow fingerprint-based anonymous users
 export const settings = sqliteTable('settings', {
   id: text('id').primaryKey().default('default'),
-  userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  userId: text('user_id'),
   openaiApiKey: text('openai_api_key').notNull().default(''),
   openaiBaseUrl: text('openai_base_url').notNull().default('https://api.openai.com/v1'),
   model: text('model').notNull().default('gpt-4o'),

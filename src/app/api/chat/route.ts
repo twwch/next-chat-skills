@@ -1,7 +1,7 @@
 import { streamText, createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { listSkills } from "@/lib/skills-reader";
-import { auth } from "@/lib/auth";
+import { getUserId } from "@/lib/auth-helper";
 import fs from "fs";
 import path from "path";
 
@@ -27,8 +27,8 @@ function extractText(msg: IncomingMessage): string {
 }
 
 export async function POST(req: Request) {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const userId = await getUserId(req);
+  if (!userId) {
     return new Response(
       JSON.stringify({ error: "Unauthorized" }),
       { status: 401, headers: { "Content-Type": "application/json" } }

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getStorage } from '@/lib/db';
-import { auth } from '@/lib/auth';
+import { getUserId } from '@/lib/auth-helper';
 
 // GET /api/db/conversations/[id]/messages — get paginated messages
 export async function GET(
@@ -8,8 +8,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
+    const userId = await getUserId(request);
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -20,7 +20,7 @@ export async function GET(
 
     const storage = await getStorage();
     // Verify conversation belongs to user
-    const conv = await storage.getConversationByUser(id, session.user.id);
+    const conv = await storage.getConversationByUser(id, userId);
     if (!conv) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
@@ -39,15 +39,15 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
+    const userId = await getUserId(request);
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { id } = await params;
     const storage = await getStorage();
     // Verify conversation belongs to user
-    const conv = await storage.getConversationByUser(id, session.user.id);
+    const conv = await storage.getConversationByUser(id, userId);
     if (!conv) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
@@ -67,15 +67,15 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
+    const userId = await getUserId(request);
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { id } = await params;
     const storage = await getStorage();
     // Verify conversation belongs to user
-    const conv = await storage.getConversationByUser(id, session.user.id);
+    const conv = await storage.getConversationByUser(id, userId);
     if (!conv) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }

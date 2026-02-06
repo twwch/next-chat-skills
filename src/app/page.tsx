@@ -322,6 +322,8 @@ export default function Home() {
     addActivity,
     loadMoreMessages,
     isLoadingMessages,
+    authEnabled,
+    user,
   } = useApp();
 
   const { skills: installedSkills, refreshSkills } = useSkills();
@@ -401,10 +403,23 @@ export default function Home() {
   selectedModelRef.current = selectedModel;
   const pendingImagesRef = useRef<Array<{ name: string; dataUrl: string }>>([]);
 
+  // Store auth state in refs for transport
+  const authEnabledRef = useRef(authEnabled);
+  authEnabledRef.current = authEnabled;
+  const userRef = useRef(user);
+  userRef.current = user;
+
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
+        headers: (): Record<string, string> => {
+          // Pass fingerprint header when auth is disabled
+          if (!authEnabledRef.current && userRef.current?.id) {
+            return { 'X-Fingerprint-ID': userRef.current.id };
+          }
+          return {};
+        },
         body: () => {
           const images = pendingImagesRef.current;
           pendingImagesRef.current = [];

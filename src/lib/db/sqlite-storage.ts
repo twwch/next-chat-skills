@@ -70,12 +70,12 @@ export async function createSqliteStorage(): Promise<StorageProvider> {
     )
   `);
 
-  // Application tables
+  // Application tables (user_id has no FK to allow fingerprint-based anonymous users)
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS conversations (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
-      user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+      user_id TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       activities TEXT DEFAULT '[]'
@@ -107,7 +107,7 @@ export async function createSqliteStorage(): Promise<StorageProvider> {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       id TEXT PRIMARY KEY DEFAULT 'default',
-      user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+      user_id TEXT,
       openai_api_key TEXT NOT NULL DEFAULT '',
       openai_base_url TEXT NOT NULL DEFAULT 'https://api.openai.com/v1',
       model TEXT NOT NULL DEFAULT 'gpt-4o',
@@ -121,13 +121,13 @@ export async function createSqliteStorage(): Promise<StorageProvider> {
 
   // Migration: add user_id column to existing tables if needed
   try {
-    sqlite.exec(`ALTER TABLE conversations ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE CASCADE`);
+    sqlite.exec(`ALTER TABLE conversations ADD COLUMN user_id TEXT`);
   } catch {
     // Column already exists
   }
 
   try {
-    sqlite.exec(`ALTER TABLE settings ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE CASCADE`);
+    sqlite.exec(`ALTER TABLE settings ADD COLUMN user_id TEXT`);
   } catch {
     // Column already exists
   }

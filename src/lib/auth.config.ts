@@ -1,12 +1,15 @@
 import Google from 'next-auth/providers/google';
 import type { NextAuthConfig } from 'next-auth';
 
+// Check if auth is enabled (default: true)
+export const isAuthEnabled = process.env.AUTH_ENABLED !== 'false';
+
 // Auth config without adapter - safe for Edge Runtime (middleware)
 export const authConfig: NextAuthConfig = {
   providers: [
     Google({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      clientId: process.env.GOOGLE_CLIENT_ID || '',
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
     }),
   ],
   session: { strategy: 'jwt' },
@@ -27,6 +30,9 @@ export const authConfig: NextAuthConfig = {
       return session;
     },
     authorized({ auth, request: { nextUrl } }) {
+      // Skip auth check if auth is disabled
+      if (!isAuthEnabled) return true;
+
       const isLoggedIn = !!auth?.user;
       const isPublicRoute = nextUrl.pathname.startsWith('/login') ||
                            nextUrl.pathname.startsWith('/api/auth');

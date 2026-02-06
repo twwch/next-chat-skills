@@ -73,12 +73,12 @@ export async function createPgStorage(): Promise<StorageProvider> {
       )
     `;
 
-    // Application tables
+    // Application tables (user_id has no FK to allow fingerprint-based anonymous users)
     await client`
       CREATE TABLE conversations (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
-        user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+        user_id TEXT,
         created_at BIGINT NOT NULL,
         updated_at BIGINT NOT NULL,
         activities JSONB DEFAULT '[]'
@@ -110,7 +110,7 @@ export async function createPgStorage(): Promise<StorageProvider> {
     await client`
       CREATE TABLE settings (
         id TEXT PRIMARY KEY DEFAULT 'default',
-        user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+        user_id TEXT,
         openai_api_key TEXT NOT NULL DEFAULT '',
         openai_base_url TEXT NOT NULL DEFAULT 'https://api.openai.com/v1',
         model TEXT NOT NULL DEFAULT 'gpt-4o',
@@ -182,10 +182,10 @@ export async function createPgStorage(): Promise<StorageProvider> {
       `;
 
       // Add user_id to existing tables
-      await client`ALTER TABLE conversations ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE CASCADE`;
+      await client`ALTER TABLE conversations ADD COLUMN user_id TEXT`;
       await client`CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id)`;
 
-      await client`ALTER TABLE settings ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE CASCADE`;
+      await client`ALTER TABLE settings ADD COLUMN user_id TEXT`;
       await client`CREATE INDEX IF NOT EXISTS idx_settings_user ON settings(user_id)`;
     }
   }

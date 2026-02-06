@@ -1,21 +1,35 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useSession } from "next-auth/react";
 import type { Conversation, ConversationMeta, Settings, Skill, ActivityItem, Message } from "@/types";
 import { DEFAULT_SETTINGS } from "@/types";
+import { getFingerprint } from "@/lib/fingerprint";
 
 const MESSAGES_PER_PAGE = 20;
+
+// Helper to create fetch with fingerprint header when auth is disabled
+function createAuthFetch(authEnabled: boolean, fingerprintId: string | null) {
+  return (url: string, options: RequestInit = {}) => {
+    const headers = new Headers(options.headers);
+    if (!authEnabled && fingerprintId) {
+      headers.set('X-Fingerprint-ID', fingerprintId);
+    }
+    return fetch(url, { ...options, headers });
+  };
+}
 
 interface User {
   id: string;
   name?: string | null;
   email?: string | null;
   image?: string | null;
+  isAnonymous?: boolean;
 }
 
 interface AppContextType {
   user: User | null;
+  authEnabled: boolean;
   conversations: Conversation[];
   currentConversationId: string | null;
   currentConversation: Conversation | null;
@@ -47,6 +61,8 @@ export function useApp() {
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
+  const [authEnabled, setAuthEnabled] = useState(true);
+  const [authConfigLoaded, setAuthConfigLoaded] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversationId, setCurrentConversationIdState] = useState<string | null>(null);
   const [settings, setSettingsState] = useState<Settings>(DEFAULT_SETTINGS);
@@ -54,13 +70,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [activeSkill, setActiveSkill] = useState<Skill | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [fingerprintId, setFingerprintId] = useState<string | null>(null);
 
-  const user: User | null = session?.user ? {
-    id: session.user.id as string,
-    name: session.user.name,
-    email: session.user.email,
-    image: session.user.image,
-  } : null;
+  // Load auth config on mount
+  useEffect(() => {
+    fetch('/api/auth-config')
+      .then(res => res.json())
+      .then(data => {
+        setAuthEnabled(data.authEnabled);
+        setAuthConfigLoaded(true);
+        // If auth is disabled, generate fingerprint
+        if (!data.authEnabled) {
+          setFingerprintId(getFingerprint());
+        }
+      })
+      .catch(() => {
+        setAuthConfigLoaded(true);
+      });
+  }, []);
+
+  // Determine user based on auth status
+  const user: User | null = authEnabled
+    ? (session?.user ? {
+        id: session.user.id as string,
+        name: session.user.name,
+        email: session.user.email,
+        image: session.user.image,
+      } : null)
+    : (fingerprintId ? {
+        id: fingerprintId,
+        name: 'Anonymous User',
+        isAnonymous: true,
+      } : null);
+
+  // Create authenticated fetch function
+  const authFetch = useMemo(
+    () => createAuthFetch(authEnabled, fingerprintId),
+    [authEnabled, fingerprintId]
+  );
 
   // Track which conversations are currently loading messages to avoid duplicate requests
   const loadingConvIds = useRef<Set<string>>(new Set());
@@ -69,6 +116,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const pendingUpdates = useRef<Map<string, Conversation>>(new Map());
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Need to use ref for authFetch in scheduleFlush to avoid stale closure
+  const authFetchRef = useRef(authFetch);
+  useEffect(() => {
+    authFetchRef.current = authFetch;
+  }, [authFetch]);
+
   function scheduleFlush() {
     if (flushTimer.current) return;
     flushTimer.current = setTimeout(async () => {
@@ -76,7 +129,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const updates = new Map(pendingUpdates.current);
       pendingUpdates.current.clear();
       for (const [id, conv] of updates) {
-        fetch(`/api/db/conversations/${id}`, {
+        authFetchRef.current(`/api/db/conversations/${id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(conv),
@@ -92,7 +145,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setIsLoadingMessages(true);
 
     try {
-      const res = await fetch(`/api/db/conversations/${convId}/messages?page=1&limit=${MESSAGES_PER_PAGE}`);
+      const res = await authFetch(`/api/db/conversations/${convId}/messages?page=1&limit=${MESSAGES_PER_PAGE}`);
       if (res.ok) {
         const data: { messages: Message[]; total: number; hasMore: boolean } = await res.json();
         setConversations((prev) =>
@@ -116,7 +169,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       loadingConvIds.current.delete(convId);
       setIsLoadingMessages(false);
     }
-  }, []);
+  }, [authFetch]);
 
   // Load more messages (older messages) for infinite scroll
   const loadMoreMessages = useCallback(async (convId: string): Promise<boolean> => {
@@ -130,7 +183,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const nextPage = (conv.currentPage || 1) + 1;
-      const res = await fetch(`/api/db/conversations/${convId}/messages?page=${nextPage}&limit=${MESSAGES_PER_PAGE}`);
+      const res = await authFetch(`/api/db/conversations/${convId}/messages?page=${nextPage}&limit=${MESSAGES_PER_PAGE}`);
       if (res.ok) {
         const data: { messages: Message[]; total: number; hasMore: boolean } = await res.json();
         setConversations((prev) =>
@@ -155,23 +208,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setIsLoadingMessages(false);
     }
     return false;
-  }, [conversations]);
+  }, [conversations, authFetch]);
 
-  // Hydrate state from database on mount (only when authenticated)
+  // Hydrate state from database on mount
   useEffect(() => {
-    // Wait for session to load
-    if (status === "loading") return;
-    // Don't fetch data if not authenticated
-    if (status === "unauthenticated") {
-      setHydrated(true);
-      return;
+    // Wait for auth config to load
+    if (!authConfigLoaded) return;
+
+    // If auth is enabled, wait for session to load
+    if (authEnabled) {
+      if (status === "loading") return;
+      // Don't fetch data if not authenticated (when auth is required)
+      if (status === "unauthenticated") {
+        setHydrated(true);
+        return;
+      }
+    } else {
+      // Auth disabled - wait for fingerprint
+      if (!fingerprintId) return;
     }
 
     async function hydrate() {
       try {
         const [convRes, settingsRes] = await Promise.all([
-          fetch('/api/db/conversations'),
-          fetch('/api/db/settings'),
+          authFetch('/api/db/conversations'),
+          authFetch('/api/db/settings'),
         ]);
         if (convRes.ok) {
           // Now returns ConversationMeta[] (without messages)
@@ -209,7 +270,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     }
     hydrate();
-  }, [status]);
+  }, [status, authEnabled, authConfigLoaded, fingerprintId, authFetch]);
 
   // Wrapper for setCurrentConversationId that also loads messages
   const setCurrentConversationId = useCallback((id: string | null) => {
@@ -267,14 +328,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setCurrentConversationIdState(conv.id);
 
     // Background persist
-    fetch('/api/db/conversations', {
+    authFetch('/api/db/conversations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(conv),
     }).catch(console.error);
 
     return conv;
-  }, []);
+  }, [authFetch]);
 
   const updateConversation = useCallback((conv: Conversation) => {
     const updated = { ...conv, updatedAt: Date.now() };
@@ -316,20 +377,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setConversations((prev) => prev.filter((c) => c.id !== id));
       if (currentConversationId === id) setCurrentConversationId(null);
 
-      fetch(`/api/db/conversations/${id}`, { method: 'DELETE' }).catch(console.error);
+      authFetch(`/api/db/conversations/${id}`, { method: 'DELETE' }).catch(console.error);
     },
-    [currentConversationId]
+    [currentConversationId, authFetch, setCurrentConversationId]
   );
 
   const setSettings = useCallback((s: Settings) => {
     setSettingsState(s);
 
-    fetch('/api/db/settings', {
+    authFetch('/api/db/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(s),
     }).catch(console.error);
-  }, []);
+  }, [authFetch]);
 
   const addActivity = useCallback((a: ActivityItem, convId?: string) => {
     const targetId = convId || currentConversationId;
@@ -342,12 +403,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       )
     );
 
-    fetch(`/api/db/conversations/${targetId}/activities`, {
+    authFetch(`/api/db/conversations/${targetId}/activities`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(a),
     }).catch(console.error);
-  }, [currentConversationId]);
+  }, [currentConversationId, authFetch]);
 
   const clearActivities = useCallback(() => {
     if (!currentConversationId) return;
@@ -359,15 +420,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       )
     );
 
-    fetch(`/api/db/conversations/${currentConversationId}/activities`, {
+    authFetch(`/api/db/conversations/${currentConversationId}/activities`, {
       method: 'DELETE',
     }).catch(console.error);
-  }, [currentConversationId]);
+  }, [currentConversationId, authFetch]);
 
   return (
     <AppContext.Provider
       value={{
         user,
+        authEnabled,
         conversations,
         currentConversationId,
         currentConversation,

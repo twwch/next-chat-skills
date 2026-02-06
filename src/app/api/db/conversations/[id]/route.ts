@@ -1,21 +1,21 @@
 import { NextResponse } from 'next/server';
 import { getStorage } from '@/lib/db';
-import { auth } from '@/lib/auth';
+import { getUserId } from '@/lib/auth-helper';
 
 // GET /api/db/conversations/[id] — get a single conversation with messages
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
+    const userId = await getUserId(request);
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { id } = await params;
     const storage = await getStorage();
-    const conv = await storage.getConversationByUser(id, session.user.id);
+    const conv = await storage.getConversationByUser(id, userId);
     if (!conv) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
@@ -32,15 +32,15 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
+    const userId = await getUserId(request);
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { id } = await params;
     const storage = await getStorage();
     const body = await request.json();
-    const updated = await storage.updateConversationForUser({ ...body, id }, session.user.id);
+    const updated = await storage.updateConversationForUser({ ...body, id }, userId);
     return NextResponse.json(updated);
   } catch (error) {
     console.error('Failed to update conversation:', error);
@@ -50,18 +50,18 @@ export async function PUT(
 
 // DELETE /api/db/conversations/[id] — delete a conversation
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
+    const userId = await getUserId(request);
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { id } = await params;
     const storage = await getStorage();
-    await storage.deleteConversationForUser(id, session.user.id);
+    await storage.deleteConversationForUser(id, userId);
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error('Failed to delete conversation:', error);
