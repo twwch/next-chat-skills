@@ -8,7 +8,7 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { SkillInvokeCard } from "@/components/skill-cards/SkillInvokeCard";
 import { useApp } from "@/providers/AppProvider";
-import { Code2, FileCode, FileText, FileJson, Braces, Eye, Download, Layers, User } from "lucide-react";
+import { Code2, FileCode, FileText, FileJson, Braces, Eye, Download, Layers, User, Copy, Check } from "lucide-react";
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString("en-US", {
@@ -115,6 +115,44 @@ function downloadContent(content: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer border ${
+        copied
+          ? "bg-accent-green/20 text-accent-green border-accent-green/30"
+          : "bg-white/5 text-text-secondary hover:text-accent-blue hover:bg-accent-blue/10 border-transparent"
+      }`}
+      title="Copy code"
+    >
+      {copied ? (
+        <>
+          <Check className="w-3.5 h-3.5" />
+          Copied
+        </>
+      ) : (
+        <>
+          <Copy className="w-3.5 h-3.5" />
+          Copy
+        </>
+      )}
+    </button>
+  );
+}
+
 function HtmlCodeBlock({
   children,
   langInfo,
@@ -139,6 +177,7 @@ function HtmlCodeBlock({
           {langInfo.label}
         </span>
         <div className="ml-auto flex items-center gap-1.5">
+          <CopyButton text={rawHtml} />
           {showDownload && (
             <button
               onClick={() => downloadContent(rawHtml, filename)}
@@ -253,6 +292,7 @@ function FileBlockCard({ block }: { block: FileBlockData }) {
             {langInfo.label}
           </span>
           <div className="ml-auto flex items-center gap-1.5">
+            <CopyButton text={block.content} />
             <button
               onClick={() => downloadContent(block.content, block.filename)}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer bg-white/5 text-text-secondary hover:text-accent-blue hover:bg-accent-blue/10 border border-transparent"
@@ -393,16 +433,19 @@ const markdownComponents: Components = {
             <span className="font-heading text-[13px] font-semibold text-text-primary">
               {langInfo.label}
             </span>
-            {hasFile && (
-              <button
-                onClick={() => downloadContent(codeText, fname)}
-                className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer bg-white/5 text-text-secondary hover:text-accent-blue hover:bg-accent-blue/10 border border-transparent"
-                title={`Download ${fname}`}
-              >
-                <Download className="w-3.5 h-3.5" />
-                Download
-              </button>
-            )}
+            <div className="ml-auto flex items-center gap-1.5">
+              <CopyButton text={codeText} />
+              {hasFile && (
+                <button
+                  onClick={() => downloadContent(codeText, fname)}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer bg-white/5 text-text-secondary hover:text-accent-blue hover:bg-accent-blue/10 border border-transparent"
+                  title={`Download ${fname}`}
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download
+                </button>
+              )}
+            </div>
           </div>
           {/* macOS dots + code */}
           <div className="bg-terminal-bg">
