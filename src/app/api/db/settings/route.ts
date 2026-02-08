@@ -11,8 +11,14 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const storage = await getStorage();
-    const dbSettings = await storage.getSettingsByUser(userId);
+    let dbSettings = null;
+    try {
+      const storage = await getStorage();
+      dbSettings = await storage.getSettingsByUser(userId);
+    } catch (dbError) {
+      // DB error - fall back to env vars only
+      console.error('Failed to get settings from DB, using env vars:', dbError);
+    }
 
     // Merge: DB values take priority, then env vars, then defaults
     const merged = {
@@ -25,7 +31,13 @@ export async function GET(request: Request) {
     return NextResponse.json(merged);
   } catch (error) {
     console.error('Failed to get settings:', error);
-    return NextResponse.json({ error: 'Failed to get settings' }, { status: 500 });
+    // Even on auth error, return env-based settings
+    return NextResponse.json({
+      openaiApiKey: process.env.OPENAI_API_KEY || DEFAULT_SETTINGS.openaiApiKey,
+      openaiBaseUrl: process.env.OPENAI_BASE_URL || DEFAULT_SETTINGS.openaiBaseUrl,
+      model: process.env.OPENAI_MODEL || DEFAULT_SETTINGS.model,
+      skillsDir: process.env.SKILLS_DIR || DEFAULT_SETTINGS.skillsDir,
+    });
   }
 }
 

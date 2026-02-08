@@ -48,4 +48,4 @@ next-env.d.ts
 /data/*.db-wal
 /data/*.db-shm
 
-docker-compose-test.yml
+docker-compose-test*.yml

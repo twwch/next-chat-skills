@@ -1,11 +1,13 @@
 import Google from 'next-auth/providers/google';
 import type { NextAuthConfig } from 'next-auth';
 
-// Check if auth is enabled (default: true)
-export const isAuthEnabled = process.env.AUTH_ENABLED !== 'false';
+// Check if auth is enabled (default: false)
+export const isAuthEnabled = process.env.AUTH_ENABLED === 'true';
 
 // Auth config without adapter - safe for Edge Runtime (middleware)
 export const authConfig: NextAuthConfig = {
+  // Trust host in Docker/production environments
+  trustHost: process.env.AUTH_TRUST_HOST === 'true',
   providers: [
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID || '',

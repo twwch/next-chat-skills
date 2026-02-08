@@ -6,123 +6,43 @@ import postgres from 'postgres';
 import Database from 'better-sqlite3';
 import * as schemaPg from './db/schema-pg';
 import * as schemaSqlite from './db/schema-sqlite';
+import { postgresqlMigrations, sqliteMigrations } from './db/migrations';
 import type { Adapter } from 'next-auth/adapters';
 import { authConfig } from './auth.config';
 import { mkdirSync, existsSync } from 'fs';
 import { dirname } from 'path';
 
-// Ensure auth tables exist in PostgreSQL
-async function ensurePgAuthTables(client: ReturnType<typeof postgres>) {
-  // Check if users table exists
-  const [{ exists }] = await client`
-    SELECT EXISTS(
-      SELECT FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name = 'users'
-    )
-  `;
+// Ensure all tables exist in PostgreSQL (using centralized migrations)
+async function ensurePgTables(client: ReturnType<typeof postgres>) {
+  // Create all tables using centralized migrations
+  await client.unsafe(postgresqlMigrations.users);
+  await client.unsafe(postgresqlMigrations.accounts);
+  await client.unsafe(postgresqlMigrations.sessions);
+  await client.unsafe(postgresqlMigrations.verificationTokens);
+  await client.unsafe(postgresqlMigrations.conversations);
+  await client.unsafe(postgresqlMigrations.messages);
+  await client.unsafe(postgresqlMigrations.settings);
 
-  if (!exists) {
-    await client`
-      CREATE TABLE users (
-        id TEXT PRIMARY KEY,
-        name TEXT,
-        email TEXT UNIQUE,
-        email_verified TIMESTAMP,
-        image TEXT,
-        created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000,
-        updated_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
-      )
-    `;
-
-    await client`
-      CREATE TABLE accounts (
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        type TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        provider_account_id TEXT NOT NULL,
-        refresh_token TEXT,
-        access_token TEXT,
-        expires_at INTEGER,
-        token_type TEXT,
-        scope TEXT,
-        id_token TEXT,
-        session_state TEXT,
-        PRIMARY KEY (provider, provider_account_id)
-      )
-    `;
-
-    await client`
-      CREATE TABLE sessions (
-        session_token TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        expires TIMESTAMP NOT NULL,
-        ip_address TEXT,
-        user_agent TEXT,
-        created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
-      )
-    `;
-
-    await client`
-      CREATE TABLE verification_tokens (
-        identifier TEXT NOT NULL,
-        token TEXT NOT NULL,
-        expires TIMESTAMP NOT NULL,
-        PRIMARY KEY (identifier, token)
-      )
-    `;
+  // Create indexes
+  for (const indexSql of postgresqlMigrations.indexes) {
+    await client.unsafe(indexSql);
   }
 }
 
-// Ensure auth tables exist in SQLite
-function ensureSqliteAuthTables(sqlite: InstanceType<typeof Database>) {
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      name TEXT,
-      email TEXT UNIQUE,
-      email_verified INTEGER,
-      image TEXT,
-      created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000),
-      updated_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
-    )
-  `);
+// Ensure all tables exist in SQLite (using centralized migrations)
+function ensureSqliteTables(sqlite: InstanceType<typeof Database>) {
+  sqlite.exec(sqliteMigrations.users);
+  sqlite.exec(sqliteMigrations.accounts);
+  sqlite.exec(sqliteMigrations.sessions);
+  sqlite.exec(sqliteMigrations.verificationTokens);
+  sqlite.exec(sqliteMigrations.conversations);
+  sqlite.exec(sqliteMigrations.messages);
+  sqlite.exec(sqliteMigrations.settings);
 
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS accounts (
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      type TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      provider_account_id TEXT NOT NULL,
-      refresh_token TEXT,
-      access_token TEXT,
-      expires_at INTEGER,
-      token_type TEXT,
-      scope TEXT,
-      id_token TEXT,
-      session_state TEXT,
-      PRIMARY KEY (provider, provider_account_id)
-    )
-  `);
-
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS sessions (
-      session_token TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      expires INTEGER NOT NULL,
-      ip_address TEXT,
-      user_agent TEXT,
-      created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
-    )
-  `);
-
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS verification_tokens (
-      identifier TEXT NOT NULL,
-      token TEXT NOT NULL,
-      expires INTEGER NOT NULL,
-      PRIMARY KEY (identifier, token)
-    )
-  `);
+  // Create indexes
+  for (const indexSql of sqliteMigrations.indexes) {
+    sqlite.exec(indexSql);
+  }
 }
 
 // Synchronous adapter initialization for NextAuth config
@@ -137,7 +57,7 @@ function getAdapter(): Adapter {
     const client = postgres(connectionString);
 
     // Schedule table creation (non-blocking)
-    ensurePgAuthTables(client).catch(console.error);
+    ensurePgTables(client).catch(console.error);
 
     const db = drizzlePg(client, { schema: schemaPg });
 
@@ -162,7 +82,7 @@ function getAdapter(): Adapter {
     sqlite.pragma('foreign_keys = ON');
 
     // Ensure tables exist (synchronous for SQLite)
-    ensureSqliteAuthTables(sqlite);
+    ensureSqliteTables(sqlite);
 
     const db = drizzleSqlite(sqlite, { schema: schemaSqlite });
 

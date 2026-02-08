@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { eq, asc, desc, sql, count, and } from 'drizzle-orm';
 import * as schema from './schema-sqlite';
+import { sqliteMigrations } from './migrations';
 import type { StorageProvider, ConversationMeta, PaginatedMessages } from './storage';
 import type { Conversation, Message, Settings, ActivityItem } from '@/types';
 import path from 'path';
@@ -19,117 +20,18 @@ export async function createSqliteStorage(): Promise<StorageProvider> {
   sqlite.pragma('journal_mode = WAL');
   sqlite.pragma('foreign_keys = ON');
 
-  // Create tables if they don't exist
-  // Auth tables
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      name TEXT,
-      email TEXT UNIQUE,
-      email_verified INTEGER,
-      image TEXT,
-      created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000),
-      updated_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
-    )
-  `);
+  // Create tables using centralized migrations
+  sqlite.exec(sqliteMigrations.users);
+  sqlite.exec(sqliteMigrations.accounts);
+  sqlite.exec(sqliteMigrations.sessions);
+  sqlite.exec(sqliteMigrations.verificationTokens);
+  sqlite.exec(sqliteMigrations.conversations);
+  sqlite.exec(sqliteMigrations.messages);
+  sqlite.exec(sqliteMigrations.settings);
 
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS accounts (
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      type TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      provider_account_id TEXT NOT NULL,
-      refresh_token TEXT,
-      access_token TEXT,
-      expires_at INTEGER,
-      token_type TEXT,
-      scope TEXT,
-      id_token TEXT,
-      session_state TEXT,
-      PRIMARY KEY (provider, provider_account_id)
-    )
-  `);
-
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS sessions (
-      session_token TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      expires INTEGER NOT NULL,
-      ip_address TEXT,
-      user_agent TEXT,
-      created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
-    )
-  `);
-
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS verification_tokens (
-      identifier TEXT NOT NULL,
-      token TEXT NOT NULL,
-      expires INTEGER NOT NULL,
-      PRIMARY KEY (identifier, token)
-    )
-  `);
-
-  // Application tables (user_id has no FK to allow fingerprint-based anonymous users)
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS conversations (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      user_id TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      activities TEXT DEFAULT '[]'
-    )
-  `);
-
-  sqlite.exec(`
-    CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id)
-  `);
-
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS messages (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-      role TEXT NOT NULL,
-      content TEXT NOT NULL,
-      timestamp INTEGER NOT NULL,
-      skill_invocations TEXT,
-      is_automatic INTEGER DEFAULT 0,
-      sort_order INTEGER NOT NULL
-    )
-  `);
-
-  sqlite.exec(`
-    CREATE INDEX IF NOT EXISTS idx_messages_conversation
-      ON messages(conversation_id, sort_order)
-  `);
-
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS settings (
-      id TEXT PRIMARY KEY DEFAULT 'default',
-      user_id TEXT,
-      openai_api_key TEXT NOT NULL DEFAULT '',
-      openai_base_url TEXT NOT NULL DEFAULT 'https://api.openai.com/v1',
-      model TEXT NOT NULL DEFAULT 'gpt-4o',
-      skills_dir TEXT NOT NULL DEFAULT '~/.claude/skills'
-    )
-  `);
-
-  sqlite.exec(`
-    CREATE INDEX IF NOT EXISTS idx_settings_user ON settings(user_id)
-  `);
-
-  // Migration: add user_id column to existing tables if needed
-  try {
-    sqlite.exec(`ALTER TABLE conversations ADD COLUMN user_id TEXT`);
-  } catch {
-    // Column already exists
-  }
-
-  try {
-    sqlite.exec(`ALTER TABLE settings ADD COLUMN user_id TEXT`);
-  } catch {
-    // Column already exists
+  // Create indexes
+  for (const indexSql of sqliteMigrations.indexes) {
+    sqlite.exec(indexSql);
   }
 
   const db = drizzle(sqlite, { schema });

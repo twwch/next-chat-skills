@@ -2,6 +2,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { eq, asc, desc, count, and } from 'drizzle-orm';
 import * as schema from './schema-pg';
+import { postgresqlMigrations } from './migrations';
 import type { StorageProvider, ConversationMeta, PaginatedMessages } from './storage';
 import type { Conversation, Message, Settings, ActivityItem } from '@/types';
 
@@ -14,180 +15,18 @@ export async function createPgStorage(): Promise<StorageProvider> {
   const client = postgres(connectionString);
   const db = drizzle(client, { schema });
 
-  // Check if tables already exist before attempting creation
-  const [{ exists }] = await client`
-    SELECT EXISTS(
-      SELECT FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name = 'users'
-    )
-  `;
+  // Create tables using centralized migrations
+  await client.unsafe(postgresqlMigrations.users);
+  await client.unsafe(postgresqlMigrations.accounts);
+  await client.unsafe(postgresqlMigrations.sessions);
+  await client.unsafe(postgresqlMigrations.verificationTokens);
+  await client.unsafe(postgresqlMigrations.conversations);
+  await client.unsafe(postgresqlMigrations.messages);
+  await client.unsafe(postgresqlMigrations.settings);
 
-  if (!exists) {
-    // Auth tables (use TIMESTAMP for next-auth drizzle adapter compatibility)
-    await client`
-      CREATE TABLE users (
-        id TEXT PRIMARY KEY,
-        name TEXT,
-        email TEXT UNIQUE,
-        email_verified TIMESTAMP,
-        image TEXT,
-        created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000,
-        updated_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
-      )
-    `;
-
-    await client`
-      CREATE TABLE accounts (
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        type TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        provider_account_id TEXT NOT NULL,
-        refresh_token TEXT,
-        access_token TEXT,
-        expires_at INTEGER,
-        token_type TEXT,
-        scope TEXT,
-        id_token TEXT,
-        session_state TEXT,
-        PRIMARY KEY (provider, provider_account_id)
-      )
-    `;
-
-    await client`
-      CREATE TABLE sessions (
-        session_token TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        expires TIMESTAMP NOT NULL,
-        ip_address TEXT,
-        user_agent TEXT,
-        created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
-      )
-    `;
-
-    await client`
-      CREATE TABLE verification_tokens (
-        identifier TEXT NOT NULL,
-        token TEXT NOT NULL,
-        expires TIMESTAMP NOT NULL,
-        PRIMARY KEY (identifier, token)
-      )
-    `;
-
-    // Application tables (user_id has no FK to allow fingerprint-based anonymous users)
-    await client`
-      CREATE TABLE conversations (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        user_id TEXT,
-        created_at BIGINT NOT NULL,
-        updated_at BIGINT NOT NULL,
-        activities JSONB DEFAULT '[]'
-      )
-    `;
-
-    await client`
-      CREATE INDEX idx_conversations_user ON conversations(user_id)
-    `;
-
-    await client`
-      CREATE TABLE messages (
-        id TEXT PRIMARY KEY,
-        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-        role TEXT NOT NULL,
-        content TEXT NOT NULL,
-        timestamp BIGINT NOT NULL,
-        skill_invocations JSONB,
-        is_automatic BOOLEAN DEFAULT false,
-        sort_order INTEGER NOT NULL
-      )
-    `;
-
-    await client`
-      CREATE INDEX idx_messages_conversation
-        ON messages(conversation_id, sort_order)
-    `;
-
-    await client`
-      CREATE TABLE settings (
-        id TEXT PRIMARY KEY DEFAULT 'default',
-        user_id TEXT,
-        openai_api_key TEXT NOT NULL DEFAULT '',
-        openai_base_url TEXT NOT NULL DEFAULT 'https://api.openai.com/v1',
-        model TEXT NOT NULL DEFAULT 'gpt-4o',
-        skills_dir TEXT NOT NULL DEFAULT '~/.claude/skills'
-      )
-    `;
-
-    await client`
-      CREATE INDEX idx_settings_user ON settings(user_id)
-    `;
-  } else {
-    // Migration: add user_id columns if they don't exist
-    const [{ user_id_exists }] = await client`
-      SELECT EXISTS(
-        SELECT FROM information_schema.columns
-        WHERE table_name = 'conversations' AND column_name = 'user_id'
-      ) as user_id_exists
-    `;
-
-    if (!user_id_exists) {
-      // Add auth tables (use TIMESTAMP for next-auth drizzle adapter compatibility)
-      await client`
-        CREATE TABLE IF NOT EXISTS users (
-          id TEXT PRIMARY KEY,
-          name TEXT,
-          email TEXT UNIQUE,
-          email_verified TIMESTAMP,
-          image TEXT,
-          created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000,
-          updated_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
-        )
-      `;
-
-      await client`
-        CREATE TABLE IF NOT EXISTS accounts (
-          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          type TEXT NOT NULL,
-          provider TEXT NOT NULL,
-          provider_account_id TEXT NOT NULL,
-          refresh_token TEXT,
-          access_token TEXT,
-          expires_at INTEGER,
-          token_type TEXT,
-          scope TEXT,
-          id_token TEXT,
-          session_state TEXT,
-          PRIMARY KEY (provider, provider_account_id)
-        )
-      `;
-
-      await client`
-        CREATE TABLE IF NOT EXISTS sessions (
-          session_token TEXT PRIMARY KEY,
-          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          expires TIMESTAMP NOT NULL,
-          ip_address TEXT,
-          user_agent TEXT,
-          created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
-        )
-      `;
-
-      await client`
-        CREATE TABLE IF NOT EXISTS verification_tokens (
-          identifier TEXT NOT NULL,
-          token TEXT NOT NULL,
-          expires TIMESTAMP NOT NULL,
-          PRIMARY KEY (identifier, token)
-        )
-      `;
-
-      // Add user_id to existing tables
-      await client`ALTER TABLE conversations ADD COLUMN user_id TEXT`;
-      await client`CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id)`;
-
-      await client`ALTER TABLE settings ADD COLUMN user_id TEXT`;
-      await client`CREATE INDEX IF NOT EXISTS idx_settings_user ON settings(user_id)`;
-    }
+  // Create indexes
+  for (const indexSql of postgresqlMigrations.indexes) {
+    await client.unsafe(indexSql);
   }
 
   function rowToMessage(row: typeof schema.messages.$inferSelect): Message {
