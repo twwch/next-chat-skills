@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { signOut } from "next-auth/react";
 import { useApp } from "@/providers/AppProvider";
 import { useSkills } from "@/hooks/useSkills";
 import {
@@ -13,6 +14,7 @@ import {
   Layers,
   Trash2,
   X,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -44,22 +46,28 @@ export function Sidebar() {
     createConversation,
     deleteConversation,
     setActiveSkill,
+    authEnabled,
   } = useApp();
   const { skills } = useSkills();
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const confirmRef = useRef<HTMLDivElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   // Close confirmation when clicking outside
   useEffect(() => {
-    if (!pendingDeleteId) return;
+    if (!pendingDeleteId && !showUserMenu) return;
     function handleClickOutside(e: MouseEvent) {
-      if (confirmRef.current && !confirmRef.current.contains(e.target as Node)) {
+      if (pendingDeleteId && confirmRef.current && !confirmRef.current.contains(e.target as Node)) {
         setPendingDeleteId(null);
+      }
+      if (showUserMenu && userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setShowUserMenu(false);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [pendingDeleteId]);
+  }, [pendingDeleteId, showUserMenu]);
 
   const handleDeleteClick = (e: React.MouseEvent, convId: string) => {
     e.stopPropagation();
@@ -183,8 +191,14 @@ export function Sidebar() {
       </div>
 
       {/* User */}
-      <div className="mt-auto px-4 py-3 border-t border-border-glass">
-        <div className="flex items-center gap-2.5">
+      <div className="mt-auto px-4 py-3 border-t border-border-glass relative" ref={userMenuRef}>
+        <div
+          className={cn(
+            "flex items-center gap-2.5 rounded-lg p-1 -m-1 transition-colors",
+            authEnabled && "cursor-pointer hover:bg-bg-glass"
+          )}
+          onClick={() => authEnabled && setShowUserMenu(!showUserMenu)}
+        >
           {user?.image ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -197,13 +211,29 @@ export function Sidebar() {
               {user?.name?.[0]?.toUpperCase() || "U"}
             </div>
           )}
-          <div>
+          <div className="flex-1 min-w-0">
             <div className="text-sm font-medium">{user?.name || "User"}</div>
             <div className="text-[11px] text-text-muted truncate max-w-[160px]">
               {user?.email || "Local Mode"}
             </div>
           </div>
         </div>
+
+        {/* User menu dropdown */}
+        {showUserMenu && authEnabled && (
+          <div className="absolute bottom-full left-4 right-4 mb-2 bg-bg-primary border border-border-glass rounded-lg shadow-lg overflow-hidden">
+            <button
+              onClick={() => {
+                setShowUserMenu(false);
+                signOut({ callbackUrl: "/login" });
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary hover:bg-bg-glass hover:text-accent-red transition-colors cursor-pointer"
+            >
+              <LogOut className="w-4 h-4" />
+              退出登录
+            </button>
+          </div>
+        )}
       </div>
     </aside>
   );
