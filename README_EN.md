@@ -6,6 +6,8 @@ An AI assistant application built with Next.js, featuring conversation managemen
 
 ## Demo
 
+![Dmoe](./images/ChatSkillsPromo.mp4)
+
 ![Demo](./images/20260204-115652.png)
 
 ![Demo](./images/20260204-145302.gif)
