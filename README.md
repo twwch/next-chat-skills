@@ -18,7 +18,8 @@
 https://github.com/user-attachments/assets/your-video-id
 
 <!-- 或者使用 HTML video 标签 -->
-<video src="./images/ChatSkillsPromo.mp4" controls width="100%"></video>
+<video src="https://github.com/user-attachments/assets/46f83fec-7f1c-496d-9f4c-9ecd6c06da99" controls width="100%"></video>
+
 
 ![Demo](./images/20260204-115652.png)
 
