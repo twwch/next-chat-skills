@@ -31,7 +31,7 @@ ENV LC_ALL=C.UTF-8
 
 # Install system dependencies
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 python3-pip python3-venv git sudo libreoffice && \
+    apt-get install -y --no-install-recommends python3 python3-pip python3-venv git sudo libreoffice ffmpeg && \
     rm -rf /var/lib/apt/lists/* && \
     ln -sf /usr/bin/python3 /usr/bin/python
 
