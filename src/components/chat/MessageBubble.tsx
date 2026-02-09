@@ -115,6 +115,40 @@ function downloadContent(content: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+function FileDownloadLink({ filePath, children }: { filePath: string; children: React.ReactNode }) {
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownload = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      const res = await fetch(`/api/files-download?path=${encodeURIComponent(filePath)}`);
+      if (!res.ok) throw new Error("Download failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filePath.split("/").pop() || "download";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Download failed:", err);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleDownload}
+      className="not-prose inline-flex items-center gap-1 text-accent-blue bg-bg-glass px-1.5 py-0.5 rounded text-xs font-mono hover:bg-accent-blue/10 hover:underline transition-colors cursor-pointer border-0"
+    >
+      <Download className="w-3 h-3 shrink-0" />
+      {children}
+    </button>
+  );
+}
+
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -468,14 +502,7 @@ const markdownComponents: Components = {
     const inlineText = extractTextContent(children);
     if (inlineText.startsWith("/tmp/chat-skills-output/")) {
       return (
-        <a
-          href={`/api/files-download?path=${encodeURIComponent(inlineText)}`}
-          download
-          className="not-prose inline-flex items-center gap-1 text-accent-blue bg-bg-glass px-1.5 py-0.5 rounded text-xs font-mono hover:bg-accent-blue/10 hover:underline transition-colors cursor-pointer"
-        >
-          <Download className="w-3 h-3 shrink-0" />
-          {children}
-        </a>
+        <FileDownloadLink filePath={inlineText}>{children}</FileDownloadLink>
       );
     }
     // Inline code
