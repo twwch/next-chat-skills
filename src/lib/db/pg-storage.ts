@@ -156,11 +156,9 @@ export async function createPgStorage(): Promise<StorageProvider> {
         })
         .where(eq(schema.conversations.id, conv.id));
 
-      // Replace all messages
-      await db.delete(schema.messages)
-        .where(eq(schema.messages.conversationId, conv.id));
-
+      // Upsert all messages (avoids race condition with concurrent saves)
       if (conv.messages?.length) {
+        const msgIds = conv.messages.map((m) => m.id);
         for (let i = 0; i < conv.messages.length; i++) {
           const msg = conv.messages[i];
           await db.insert(schema.messages).values({
@@ -173,8 +171,29 @@ export async function createPgStorage(): Promise<StorageProvider> {
             fileBlocks: msg.fileBlocks ?? null,
             isAutomatic: msg.isAutomatic ?? false,
             sortOrder: i,
+          }).onConflictDoUpdate({
+            target: schema.messages.id,
+            set: {
+              content: msg.content,
+              skillInvocations: msg.skillInvocations ?? null,
+              fileBlocks: msg.fileBlocks ?? null,
+              isAutomatic: msg.isAutomatic ?? false,
+              sortOrder: i,
+            },
           });
         }
+        // Delete messages no longer in the conversation
+        const allMsgRows = await db.select({ id: schema.messages.id })
+          .from(schema.messages)
+          .where(eq(schema.messages.conversationId, conv.id));
+        for (const row of allMsgRows) {
+          if (!msgIds.includes(row.id)) {
+            await db.delete(schema.messages).where(eq(schema.messages.id, row.id));
+          }
+        }
+      } else {
+        await db.delete(schema.messages)
+          .where(eq(schema.messages.conversationId, conv.id));
       }
 
       return conv;
@@ -441,11 +460,9 @@ export async function createPgStorage(): Promise<StorageProvider> {
         })
         .where(eq(schema.conversations.id, conv.id));
 
-      // Replace all messages
-      await db.delete(schema.messages)
-        .where(eq(schema.messages.conversationId, conv.id));
-
+      // Upsert all messages (avoids race condition with concurrent saves)
       if (conv.messages?.length) {
+        const msgIds = conv.messages.map((m) => m.id);
         for (let i = 0; i < conv.messages.length; i++) {
           const msg = conv.messages[i];
           await db.insert(schema.messages).values({
@@ -458,8 +475,29 @@ export async function createPgStorage(): Promise<StorageProvider> {
             fileBlocks: msg.fileBlocks ?? null,
             isAutomatic: msg.isAutomatic ?? false,
             sortOrder: i,
+          }).onConflictDoUpdate({
+            target: schema.messages.id,
+            set: {
+              content: msg.content,
+              skillInvocations: msg.skillInvocations ?? null,
+              fileBlocks: msg.fileBlocks ?? null,
+              isAutomatic: msg.isAutomatic ?? false,
+              sortOrder: i,
+            },
           });
         }
+        // Delete messages no longer in the conversation
+        const allMsgRows = await db.select({ id: schema.messages.id })
+          .from(schema.messages)
+          .where(eq(schema.messages.conversationId, conv.id));
+        for (const row of allMsgRows) {
+          if (!msgIds.includes(row.id)) {
+            await db.delete(schema.messages).where(eq(schema.messages.id, row.id));
+          }
+        }
+      } else {
+        await db.delete(schema.messages)
+          .where(eq(schema.messages.conversationId, conv.id));
       }
 
       return conv;
