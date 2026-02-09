@@ -26,6 +26,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 
 # Install Python 3 + pip + git for Skills script execution and skill installation
 RUN apt-get update && \
