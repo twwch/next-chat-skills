@@ -25,6 +25,9 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+ENV PIP_USER=1
+ENV PATH="/home/nextjs/.local/bin:${PATH}"
 
 # Install Python 3 + pip + git for Skills script execution and skill installation
 RUN apt-get update && \
