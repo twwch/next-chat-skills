@@ -464,6 +464,20 @@ const markdownComponents: Components = {
         </div>
       );
     }
+    // Inline code — detect downloadable file paths
+    const inlineText = extractTextContent(children);
+    if (inlineText.startsWith("/tmp/chat-skills-output/")) {
+      return (
+        <a
+          href={`/api/files-download?path=${encodeURIComponent(inlineText)}`}
+          download
+          className="not-prose inline-flex items-center gap-1 text-accent-blue bg-bg-glass px-1.5 py-0.5 rounded text-xs font-mono hover:bg-accent-blue/10 hover:underline transition-colors cursor-pointer"
+        >
+          <Download className="w-3 h-3 shrink-0" />
+          {children}
+        </a>
+      );
+    }
     // Inline code
     return (
       <code
