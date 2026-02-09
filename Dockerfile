@@ -29,9 +29,9 @@ ENV PIP_BREAK_SYSTEM_PACKAGES=1
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
-# Install Python 3 + pip + git for Skills script execution and skill installation
+# Install system dependencies
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 python3-pip python3-venv git sudo && \
+    apt-get install -y --no-install-recommends python3 python3-pip python3-venv git sudo libreoffice && \
     rm -rf /var/lib/apt/lists/* && \
     ln -sf /usr/bin/python3 /usr/bin/python
 
