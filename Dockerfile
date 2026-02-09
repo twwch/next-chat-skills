@@ -27,7 +27,6 @@ ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 ENV PIP_USER=1
-ENV NPM_CONFIG_PREFIX=/home/nextjs/.npm-global
 ENV PATH="/home/nextjs/.npm-global/bin:/home/nextjs/.local/bin:${PATH}"
 
 # Install Python 3 + pip + git + sudo for Skills script execution and skill installation
@@ -61,6 +60,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
 USER nextjs
+
+# npm install -g writes to user directory (not /usr/local which needs root)
+ENV NPM_CONFIG_PREFIX=/home/nextjs/.npm-global
 
 EXPOSE 3000
 
