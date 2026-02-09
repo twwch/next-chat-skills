@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { Check, Copy } from "lucide-react";
 import type { TerminalData, TerminalLine } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +22,10 @@ export function TerminalPanel({
   data: TerminalData;
   isRunning: boolean;
 }) {
+  const terminalText = data.lines
+    .map((l) => (l.type === "cmd" ? `$ ${l.text.replace(/^\$ /, "")}` : l.text))
+    .join("\n");
+
   return (
     <div className="bg-terminal-bg font-mono text-xs leading-[1.7]">
       {/* Terminal header */}
@@ -30,6 +36,9 @@ export function TerminalPanel({
         {data.cwd && (
           <span className="ml-3 text-[11px] text-text-muted">{data.cwd}</span>
         )}
+        <div className="ml-auto">
+          <TerminalCopyButton text={terminalText} />
+        </div>
       </div>
 
       {/* Terminal body */}
@@ -57,5 +66,34 @@ function TerminalLineRow({ line }: { line: TerminalLine }) {
     <div className={cn("whitespace-pre-wrap break-all", LINE_COLORS[line.type] || "text-text-muted")}>
       {line.text}
     </div>
+  );
+}
+
+function TerminalCopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className={cn(
+        "flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-all cursor-pointer",
+        copied
+          ? "text-accent-green"
+          : "text-text-muted hover:text-text-primary"
+      )}
+      title="Copy terminal output"
+    >
+      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+    </button>
   );
 }

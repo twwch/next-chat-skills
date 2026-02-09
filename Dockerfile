@@ -46,6 +46,9 @@ RUN npx skills add https://github.com/vercel-labs/skills --skill find-skills --y
 RUN npx skills add nextlevelbuilder/ui-ux-pro-max-skill --yes --global
 RUN npx skills add anthropics/skills --skill skill-creator --yes --global
 
+# Fix npm cache permissions (npx runs as root but HOME=/home/nextjs)
+RUN chown -R nextjs:nodejs /home/nextjs
+
 # Copy standalone build output
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
